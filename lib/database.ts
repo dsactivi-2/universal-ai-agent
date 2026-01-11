@@ -222,7 +222,9 @@ export function getTaskStats() {
       SUM(CASE WHEN phase = 'executing' THEN 1 ELSE 0 END) as executing,
       SUM(CASE WHEN phase = 'planning' THEN 1 ELSE 0 END) as planning,
       SUM(CASE WHEN phase = 'awaiting_approval' THEN 1 ELSE 0 END) as awaiting_approval,
-      SUM(CASE WHEN phase = 'failed' THEN 1 ELSE 0 END) as failed
+      SUM(CASE WHEN phase = 'failed' THEN 1 ELSE 0 END) as failed,
+      SUM(CASE WHEN phase = 'stopped' THEN 1 ELSE 0 END) as stopped,
+      SUM(CASE WHEN phase = 'rejected' THEN 1 ELSE 0 END) as rejected
     FROM tasks
   `)
   return stmt.get()
