@@ -397,7 +397,7 @@ export default function Dashboard() {
                           <div className="text-xs text-gray-600 mb-2">
                             <strong>Input:</strong>
                             <pre className="mt-1 p-2 bg-white rounded overflow-x-auto">
-                              {typeof step.input === 'object' ? JSON.stringify(step.input, null, 2) : step.input}
+                              {typeof step.input === 'object' ? JSON.stringify(step.input, null, 2) : String(step.input)}
                             </pre>
                           </div>
                           <div className="text-xs">
