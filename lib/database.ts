@@ -89,6 +89,21 @@ db.exec(`
   )
 `)
 
+// Attachments table for file uploads
+db.exec(`
+  CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    analysis TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+  )
+`)
+
 export interface Task {
   id: string
   goal: string
@@ -128,6 +143,17 @@ export interface Step {
   output: string
   success: boolean
   duration: number
+  createdAt: string
+}
+
+export interface Attachment {
+  id: string
+  taskId: string
+  filename: string
+  originalName: string
+  mimeType: string
+  size: number
+  analysis?: string
   createdAt: string
 }
 
@@ -450,6 +476,80 @@ export function getStepsByTaskId(taskId: string): Step[] {
 // Delete steps for a task
 export function deleteStepsByTaskId(taskId: string): void {
   db.prepare('DELETE FROM steps WHERE task_id = ?').run(taskId)
+}
+
+// ==================== ATTACHMENT FUNCTIONS ====================
+
+// Add attachment to task
+export function addAttachment(
+  id: string,
+  taskId: string,
+  filename: string,
+  originalName: string,
+  mimeType: string,
+  size: number,
+  analysis?: string
+): Attachment {
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`
+    INSERT INTO attachments (id, task_id, filename, original_name, mime_type, size, analysis, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  stmt.run(id, taskId, filename, originalName, mimeType, size, analysis || null, now)
+
+  return {
+    id,
+    taskId,
+    filename,
+    originalName,
+    mimeType,
+    size,
+    analysis,
+    createdAt: now
+  }
+}
+
+// Get attachments for a task
+export function getAttachmentsByTaskId(taskId: string): Attachment[] {
+  const stmt = db.prepare('SELECT * FROM attachments WHERE task_id = ? ORDER BY created_at ASC')
+  const rows = stmt.all(taskId) as any[]
+
+  return rows.map(row => ({
+    id: row.id,
+    taskId: row.task_id,
+    filename: row.filename,
+    originalName: row.original_name,
+    mimeType: row.mime_type,
+    size: row.size,
+    analysis: row.analysis,
+    createdAt: row.created_at
+  }))
+}
+
+// Update attachment analysis
+export function updateAttachmentAnalysis(id: string, analysis: string): Attachment | null {
+  const stmt = db.prepare('UPDATE attachments SET analysis = ? WHERE id = ?')
+  stmt.run(analysis, id)
+
+  const row = db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as any
+  if (!row) return null
+
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    filename: row.filename,
+    originalName: row.original_name,
+    mimeType: row.mime_type,
+    size: row.size,
+    analysis: row.analysis,
+    createdAt: row.created_at
+  }
+}
+
+// Delete attachments for a task
+export function deleteAttachmentsByTaskId(taskId: string): void {
+  db.prepare('DELETE FROM attachments WHERE task_id = ?').run(taskId)
 }
 
 export default db

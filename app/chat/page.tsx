@@ -17,6 +17,16 @@ interface Task {
   plan?: string
 }
 
+interface UploadedFile {
+  id: string
+  filename: string
+  originalName: string
+  mimeType: string
+  size: number
+  analysis: string
+  path: string
+}
+
 export default function Chat() {
   const [message, setMessage] = useState('')
   const [notes, setNotes] = useState('')
@@ -27,7 +37,11 @@ export default function Chat() {
   const [miniChatMessages, setMiniChatMessages] = useState<Message[]>([])
   const [miniChatInput, setMiniChatInput] = useState('')
   const [miniChatLoading, setMiniChatLoading] = useState(false)
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [dragActive, setDragActive] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Auto-scroll mini chat
   useEffect(() => {
@@ -69,6 +83,60 @@ export default function Chat() {
     }
   }
 
+  const handleFileUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+
+    setUploading(true)
+    const newFiles: UploadedFile[] = []
+
+    for (const file of Array.from(files)) {
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          newFiles.push(data.file)
+        } else {
+          const error = await res.json()
+          alert(`Fehler beim Hochladen von ${file.name}: ${error.error}`)
+        }
+      } catch (e) {
+        console.error('Upload failed:', e)
+        alert(`Fehler beim Hochladen von ${file.name}`)
+      }
+    }
+
+    setUploadedFiles(prev => [...prev, ...newFiles])
+    setUploading(false)
+  }
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true)
+    } else if (e.type === 'dragleave') {
+      setDragActive(false)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+    handleFileUpload(e.dataTransfer.files)
+  }
+
+  const removeFile = (fileId: string) => {
+    setUploadedFiles(prev => prev.filter(f => f.id !== fileId))
+  }
+
   const handlePreview = (e: React.FormEvent) => {
     e.preventDefault()
     if (!message.trim()) return
@@ -78,9 +146,19 @@ export default function Chat() {
   const handleConfirm = async () => {
     setLoading(true)
     try {
-      const fullMessage = notes.trim()
-        ? `${message}\n\n--- Zusaetzliche Hinweise ---\n${notes}`
-        : message
+      // Build message with file analysis
+      let fullMessage = message
+
+      if (uploadedFiles.length > 0) {
+        fullMessage += '\n\n--- Angehaengte Dateien ---'
+        for (const file of uploadedFiles) {
+          fullMessage += `\n\n### ${file.originalName}\n${file.analysis}`
+        }
+      }
+
+      if (notes.trim()) {
+        fullMessage += `\n\n--- Zusaetzliche Hinweise ---\n${notes}`
+      }
 
       const res = await fetch('/api/tasks', {
         method: 'POST',
@@ -97,6 +175,7 @@ export default function Chat() {
       setShowConfirm(false)
       setMessage('')
       setNotes('')
+      setUploadedFiles([])
     } catch (error) {
       console.error('Error creating task:', error)
     } finally {
@@ -170,6 +249,21 @@ export default function Chat() {
     }
   }
 
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  const getFileIcon = (mimeType: string) => {
+    if (mimeType.startsWith('image/')) return '🖼️'
+    if (mimeType === 'application/pdf') return '📄'
+    if (mimeType.includes('json')) return '📋'
+    if (mimeType.includes('javascript') || mimeType.includes('typescript')) return '💻'
+    if (mimeType.startsWith('text/')) return '📝'
+    return '📎'
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
@@ -203,6 +297,84 @@ export default function Chat() {
               />
             </div>
 
+            {/* File Upload Area */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Dateien anhaengen (optional)
+              </label>
+              <div
+                className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                  dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+                }`}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={(e) => handleFileUpload(e.target.files)}
+                  className="hidden"
+                  accept="image/*,.pdf,.txt,.md,.json,.csv,.html,.css,.js,.ts,.xml"
+                />
+                {uploading ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                    <span className="text-gray-600">Wird hochgeladen und analysiert...</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-4xl mb-2">📁</div>
+                    <p className="text-gray-600 mb-2">
+                      Dateien hierher ziehen oder{' '}
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-blue-500 hover:underline"
+                      >
+                        durchsuchen
+                      </button>
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      Bilder, PDFs, Text, Code (max. 10MB pro Datei)
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* Uploaded Files List */}
+              {uploadedFiles.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {uploadedFiles.map(file => (
+                    <div
+                      key={file.id}
+                      className="flex items-start gap-3 p-3 bg-green-50 border border-green-200 rounded-lg"
+                    >
+                      <span className="text-2xl">{getFileIcon(file.mimeType)}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium truncate">{file.originalName}</span>
+                          <span className="text-xs text-gray-500">{formatFileSize(file.size)}</span>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1 line-clamp-2">{file.analysis}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(file.id)}
+                        className="text-red-500 hover:text-red-700 p-1"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Zusaetzliche Hinweise (optional)
@@ -232,6 +404,23 @@ export default function Chat() {
               <h3 className="text-sm font-medium text-gray-500 mb-2">Aufgabe:</h3>
               <p className="whitespace-pre-wrap">{message}</p>
             </div>
+
+            {uploadedFiles.length > 0 && (
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <h3 className="text-sm font-medium text-blue-700 mb-2">
+                  Angehaengte Dateien ({uploadedFiles.length}):
+                </h3>
+                <div className="space-y-2">
+                  {uploadedFiles.map(file => (
+                    <div key={file.id} className="flex items-center gap-2 text-blue-800 text-sm">
+                      <span>{getFileIcon(file.mimeType)}</span>
+                      <span>{file.originalName}</span>
+                      <span className="text-blue-500">({formatFileSize(file.size)})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {notes && (
               <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
