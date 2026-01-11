@@ -364,13 +364,13 @@ export function getTaskStats() {
   const stmt = db.prepare(`
     SELECT
       COUNT(*) as total,
-      SUM(CASE WHEN phase = 'completed' THEN 1 ELSE 0 END) as completed,
-      SUM(CASE WHEN phase = 'executing' THEN 1 ELSE 0 END) as executing,
-      SUM(CASE WHEN phase = 'planning' THEN 1 ELSE 0 END) as planning,
-      SUM(CASE WHEN phase = 'awaiting_approval' THEN 1 ELSE 0 END) as awaiting_approval,
-      SUM(CASE WHEN phase = 'failed' THEN 1 ELSE 0 END) as failed,
-      SUM(CASE WHEN phase = 'stopped' THEN 1 ELSE 0 END) as stopped,
-      SUM(CASE WHEN phase = 'rejected' THEN 1 ELSE 0 END) as rejected
+      COALESCE(SUM(CASE WHEN phase = 'completed' THEN 1 ELSE 0 END), 0) as completed,
+      COALESCE(SUM(CASE WHEN phase = 'executing' THEN 1 ELSE 0 END), 0) as executing,
+      COALESCE(SUM(CASE WHEN phase = 'planning' THEN 1 ELSE 0 END), 0) as planning,
+      COALESCE(SUM(CASE WHEN phase = 'awaiting_approval' THEN 1 ELSE 0 END), 0) as awaiting_approval,
+      COALESCE(SUM(CASE WHEN phase = 'failed' THEN 1 ELSE 0 END), 0) as failed,
+      COALESCE(SUM(CASE WHEN phase = 'stopped' THEN 1 ELSE 0 END), 0) as stopped,
+      COALESCE(SUM(CASE WHEN phase = 'rejected' THEN 1 ELSE 0 END), 0) as rejected
     FROM tasks
   `)
   return stmt.get()
