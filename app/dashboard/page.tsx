@@ -14,6 +14,14 @@ interface Task {
   totalCost?: number
 }
 
+interface Message {
+  id: string
+  taskId: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+}
+
 interface Stats {
   total: number
   completed: number
@@ -27,14 +35,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string>('all')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
-  const [editMode, setEditMode] = useState(false)
-  const [editPhase, setEditPhase] = useState('')
+  const [messages, setMessages] = useState<Message[]>([])
+  const [newMessage, setNewMessage] = useState('')
+  const [sending, setSending] = useState(false)
   const [stats, setStats] = useState<Stats>({
-    total: 0,
-    completed: 0,
-    executing: 0,
-    waiting: 0,
-    failed: 0
+    total: 0, completed: 0, executing: 0, waiting: 0, failed: 0
   })
 
   useEffect(() => {
@@ -47,12 +52,23 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [])
 
-  // GET /api/tasks
+  // Load messages when task is selected
+  useEffect(() => {
+    if (selectedTask) {
+      fetchMessages(selectedTask.id)
+    }
+  }, [selectedTask?.id])
+
   const fetchTasks = async () => {
     try {
       const res = await fetch('/api/tasks')
       const data = await res.json()
       setTasks(data)
+      // Update selected task if it exists
+      if (selectedTask) {
+        const updated = data.find((t: Task) => t.id === selectedTask.id)
+        if (updated) setSelectedTask(updated)
+      }
     } catch (error) {
       console.error('Failed to fetch tasks:', error)
     } finally {
@@ -60,7 +76,6 @@ export default function Dashboard() {
     }
   }
 
-  // GET /api/tasks?stats=true
   const fetchStats = async () => {
     try {
       const res = await fetch('/api/tasks?stats=true')
@@ -71,10 +86,53 @@ export default function Dashboard() {
     }
   }
 
-  // DELETE /api/tasks?id=xxx
+  const fetchMessages = async (taskId: string) => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/messages`)
+      const data = await res.json()
+      setMessages(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('Failed to fetch messages:', error)
+      setMessages([])
+    }
+  }
+
+  const sendMessage = async () => {
+    if (!selectedTask || !newMessage.trim() || sending) return
+
+    setSending(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: newMessage })
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        // Add user message and assistant response
+        setMessages(prev => [
+          ...prev,
+          { id: 'user-' + Date.now(), taskId: selectedTask.id, role: 'user', content: newMessage, createdAt: new Date().toISOString() },
+          data.message
+        ])
+        setNewMessage('')
+        // Refresh task to get updated output
+        fetchTasks()
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error)
+      alert('Fehler beim Senden')
+    } finally {
+      setSending(false)
+    }
+  }
+
   const deleteTask = async (taskId: string) => {
     if (!confirm('Task wirklich löschen?')) return
-
     try {
       const res = await fetch(`/api/tasks?id=${taskId}`, { method: 'DELETE' })
       if (res.ok) {
@@ -84,26 +142,6 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error('Failed to delete task:', error)
-    }
-  }
-
-  // PATCH /api/tasks
-  const updateTask = async (taskId: string, phase: string) => {
-    try {
-      const res = await fetch('/api/tasks', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: taskId, phase })
-      })
-      if (res.ok) {
-        const updated = await res.json()
-        setTasks(tasks.map(t => t.id === taskId ? updated : t))
-        setSelectedTask(updated)
-        setEditMode(false)
-        fetchStats()
-      }
-    } catch (error) {
-      console.error('Failed to update task:', error)
     }
   }
 
@@ -195,7 +233,7 @@ export default function Dashboard() {
               </p>
               <div className="flex gap-2">
                 <button
-                  onClick={() => { setSelectedTask(task); setEditPhase(task.status.phase); }}
+                  onClick={() => setSelectedTask(task)}
                   className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
                 >
                   Details
@@ -215,60 +253,105 @@ export default function Dashboard() {
           <div className="text-center py-12 text-gray-500">Keine Tasks gefunden</div>
         )}
 
-        {/* Modal */}
+        {/* Task Detail Modal with Chat */}
         {selectedTask && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-              <div className="flex justify-between items-start mb-4">
-                <h2 className="text-xl font-bold">{selectedTask.goal}</h2>
-                <button onClick={() => setSelectedTask(null)} className="text-2xl">&times;</button>
+            <div className="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col">
+              {/* Header */}
+              <div className="flex justify-between items-start p-4 border-b">
+                <div>
+                  <h2 className="text-xl font-bold">{selectedTask.goal}</h2>
+                  <span className={`inline-block mt-1 px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase)}`}>
+                    {selectedTask.status.phase}
+                  </span>
+                </div>
+                <button onClick={() => setSelectedTask(null)} className="text-2xl text-gray-500 hover:text-gray-700">&times;</button>
               </div>
 
-              <div className="space-y-3 text-sm">
-                <p><strong>ID:</strong> {selectedTask.id}</p>
-
-                <div className="flex items-center gap-2">
-                  <strong>Status:</strong>
-                  {editMode ? (
-                    <>
-                      <select
-                        value={editPhase}
-                        onChange={(e) => setEditPhase(e.target.value)}
-                        className="border rounded px-2 py-1"
-                      >
-                        <option value="waiting">waiting</option>
-                        <option value="executing">executing</option>
-                        <option value="completed">completed</option>
-                        <option value="failed">failed</option>
-                      </select>
-                      <button onClick={() => updateTask(selectedTask.id, editPhase)} className="px-2 py-1 bg-green-500 text-white rounded text-xs">Speichern</button>
-                      <button onClick={() => setEditMode(false)} className="px-2 py-1 bg-gray-300 rounded text-xs">Abbrechen</button>
-                    </>
-                  ) : (
-                    <>
-                      <span className={`px-2 py-1 rounded ${getStatusColor(selectedTask.status.phase)}`}>
-                        {selectedTask.status.phase}
-                      </span>
-                      <button onClick={() => setEditMode(true)} className="px-2 py-1 bg-gray-200 rounded text-xs">Bearbeiten</button>
-                    </>
-                  )}
+              {/* Content Area */}
+              <div className="flex-1 overflow-y-auto p-4">
+                {/* Task Info */}
+                <div className="mb-4 p-3 bg-gray-50 rounded text-sm space-y-1">
+                  <p><strong>ID:</strong> {selectedTask.id}</p>
+                  <p><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</p>
+                  {selectedTask.totalDuration && <p><strong>Gesamtdauer:</strong> {selectedTask.totalDuration}ms</p>}
+                  {selectedTask.totalCost && <p><strong>Gesamtkosten:</strong> ${selectedTask.totalCost.toFixed(4)}</p>}
                 </div>
 
-                <p><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</p>
-                {selectedTask.updatedAt && <p><strong>Aktualisiert:</strong> {new Date(selectedTask.updatedAt).toLocaleString()}</p>}
-                {selectedTask.totalDuration && <p><strong>Dauer:</strong> {selectedTask.totalDuration}ms</p>}
-                {selectedTask.totalCost && <p><strong>Kosten:</strong> ${selectedTask.totalCost.toFixed(4)}</p>}
+                {/* Latest Output */}
                 {selectedTask.output && (
-                  <div>
-                    <strong>Output:</strong>
-                    <pre className="mt-1 p-2 bg-gray-100 rounded text-xs overflow-x-auto">{selectedTask.output}</pre>
+                  <div className="mb-4">
+                    <h3 className="font-semibold mb-2">Letzte Antwort:</h3>
+                    <div className="p-3 bg-blue-50 rounded whitespace-pre-wrap text-sm max-h-48 overflow-y-auto">
+                      {selectedTask.output}
+                    </div>
+                  </div>
+                )}
+
+                {/* Conversation History */}
+                {messages.length > 0 && (
+                  <div className="mb-4">
+                    <h3 className="font-semibold mb-2">Konversation:</h3>
+                    <div className="space-y-3 max-h-64 overflow-y-auto">
+                      {messages.map(msg => (
+                        <div
+                          key={msg.id}
+                          className={`p-3 rounded ${
+                            msg.role === 'user'
+                              ? 'bg-gray-100 ml-8'
+                              : 'bg-green-50 mr-8'
+                          }`}
+                        >
+                          <div className="text-xs text-gray-500 mb-1">
+                            {msg.role === 'user' ? 'Du' : 'AI'} - {new Date(msg.createdAt).toLocaleTimeString()}
+                          </div>
+                          <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
 
-              <div className="flex gap-2 mt-6 pt-4 border-t">
-                <button onClick={() => deleteTask(selectedTask.id)} className="px-4 py-2 bg-red-500 text-white rounded">Löschen</button>
-                <button onClick={() => setSelectedTask(null)} className="px-4 py-2 bg-gray-300 rounded">Schließen</button>
+              {/* Chat Input */}
+              <div className="p-4 border-t">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                    placeholder="Folgenachricht eingeben... (z.B. 'Führe Punkt 1 aus')"
+                    className="flex-1 px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    disabled={sending}
+                  />
+                  <button
+                    onClick={sendMessage}
+                    disabled={sending || !newMessage.trim()}
+                    className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {sending ? 'Sende...' : 'Senden'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Schreibe eine Folgenachricht, um an diesem Task weiterzuarbeiten ohne einen neuen zu erstellen.
+                </p>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex gap-2 p-4 border-t bg-gray-50">
+                <button
+                  onClick={() => deleteTask(selectedTask.id)}
+                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                >
+                  Löschen
+                </button>
+                <button
+                  onClick={() => setSelectedTask(null)}
+                  className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                >
+                  Schließen
+                </button>
               </div>
             </div>
           </div>

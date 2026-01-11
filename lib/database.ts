@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3'
 import path from 'path'
+import fs from 'fs'
 
 const dbPath = path.join(process.cwd(), 'data', 'tasks.db')
 
 // Ensure data directory exists
-import fs from 'fs'
 const dataDir = path.join(process.cwd(), 'data')
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true })
@@ -28,6 +28,18 @@ db.exec(`
   )
 `)
 
+// Messages table for task conversations
+db.exec(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+  )
+`)
+
 export interface Task {
   id: string
   goal: string
@@ -38,6 +50,14 @@ export interface Task {
   totalCost?: number
   createdAt: string
   updatedAt: string
+}
+
+export interface Message {
+  id: string
+  taskId: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
 }
 
 export interface CreateTaskInput {
@@ -143,6 +163,8 @@ export function updateTask(id: string, updates: Partial<{
 
 // Delete task
 export function deleteTask(id: string): boolean {
+  // Delete messages first
+  db.prepare('DELETE FROM messages WHERE task_id = ?').run(id)
   const stmt = db.prepare('DELETE FROM tasks WHERE id = ?')
   const result = stmt.run(id)
   return result.changes > 0
@@ -160,6 +182,50 @@ export function getTaskStats() {
     FROM tasks
   `)
   return stmt.get()
+}
+
+// ==================== MESSAGE FUNCTIONS ====================
+
+// Get messages for a task
+export function getMessagesByTaskId(taskId: string): Message[] {
+  const stmt = db.prepare('SELECT * FROM messages WHERE task_id = ? ORDER BY created_at ASC')
+  const rows = stmt.all(taskId) as any[]
+
+  return rows.map(row => ({
+    id: row.id,
+    taskId: row.task_id,
+    role: row.role,
+    content: row.content,
+    createdAt: row.created_at
+  }))
+}
+
+// Add message to task
+export function addMessage(taskId: string, messageId: string, role: 'user' | 'assistant', content: string): Message {
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`
+    INSERT INTO messages (id, task_id, role, content, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `)
+
+  stmt.run(messageId, taskId, role, content, now)
+
+  return {
+    id: messageId,
+    taskId,
+    role,
+    content,
+    createdAt: now
+  }
+}
+
+// Get conversation history for Claude API
+export function getConversationHistory(taskId: string): Array<{ role: 'user' | 'assistant', content: string }> {
+  const messages = getMessagesByTaskId(taskId)
+  return messages.map(m => ({
+    role: m.role,
+    content: m.content
+  }))
 }
 
 export default db
