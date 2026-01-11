@@ -40,6 +40,22 @@ db.exec(`
   )
 `)
 
+// Steps table for tool executions
+db.exec(`
+  CREATE TABLE IF NOT EXISTS steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    step_number INTEGER NOT NULL,
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    output TEXT,
+    success INTEGER DEFAULT 1,
+    duration INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+  )
+`)
+
 export interface Task {
   id: string
   goal: string
@@ -57,6 +73,18 @@ export interface Message {
   taskId: string
   role: 'user' | 'assistant'
   content: string
+  createdAt: string
+}
+
+export interface Step {
+  id: number
+  taskId: string
+  stepNumber: number
+  tool: string
+  input: string
+  output: string
+  success: boolean
+  duration: number
   createdAt: string
 }
 
@@ -163,8 +191,9 @@ export function updateTask(id: string, updates: Partial<{
 
 // Delete task
 export function deleteTask(id: string): boolean {
-  // Delete messages first
+  // Delete messages and steps first
   db.prepare('DELETE FROM messages WHERE task_id = ?').run(id)
+  db.prepare('DELETE FROM steps WHERE task_id = ?').run(id)
   const stmt = db.prepare('DELETE FROM tasks WHERE id = ?')
   const result = stmt.run(id)
   return result.changes > 0
@@ -226,6 +255,64 @@ export function getConversationHistory(taskId: string): Array<{ role: 'user' | '
     role: m.role,
     content: m.content
   }))
+}
+
+// ==================== STEP FUNCTIONS ====================
+
+// Add step to task
+export function addStep(
+  taskId: string,
+  stepNumber: number,
+  tool: string,
+  input: unknown,
+  output: string,
+  success: boolean,
+  duration: number
+): Step {
+  const now = new Date().toISOString()
+  const inputStr = typeof input === 'string' ? input : JSON.stringify(input)
+
+  const stmt = db.prepare(`
+    INSERT INTO steps (task_id, step_number, tool, input, output, success, duration, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  const result = stmt.run(taskId, stepNumber, tool, inputStr, output, success ? 1 : 0, duration, now)
+
+  return {
+    id: result.lastInsertRowid as number,
+    taskId,
+    stepNumber,
+    tool,
+    input: inputStr,
+    output,
+    success,
+    duration,
+    createdAt: now
+  }
+}
+
+// Get steps for a task
+export function getStepsByTaskId(taskId: string): Step[] {
+  const stmt = db.prepare('SELECT * FROM steps WHERE task_id = ? ORDER BY step_number ASC')
+  const rows = stmt.all(taskId) as any[]
+
+  return rows.map(row => ({
+    id: row.id,
+    taskId: row.task_id,
+    stepNumber: row.step_number,
+    tool: row.tool,
+    input: row.input,
+    output: row.output,
+    success: row.success === 1,
+    duration: row.duration,
+    createdAt: row.created_at
+  }))
+}
+
+// Delete steps for a task
+export function deleteStepsByTaskId(taskId: string): void {
+  db.prepare('DELETE FROM steps WHERE task_id = ?').run(taskId)
 }
 
 export default db

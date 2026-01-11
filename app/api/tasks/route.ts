@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
-import { getAllTasks, createTask, updateTask, getTaskStats } from '@/lib/database'
-import { Orchestrator } from '@/lib/orchestrator'
+import { getAllTasks, createTask, updateTask, getTaskStats, addStep } from '@/lib/database'
+import { Orchestrator, StepResult } from '@/lib/orchestrator'
 
 const orchestrator = new Orchestrator()
 
@@ -42,9 +42,24 @@ export async function POST(request: NextRequest) {
       phase: 'executing'
     })
 
+    // Step callback to save steps to database
+    const onStep = (step: StepResult) => {
+      addStep(
+        taskId,
+        step.step,
+        step.tool,
+        step.input,
+        step.output,
+        step.success,
+        step.duration
+      )
+    }
+
     // Orchestrator starten (async)
     orchestrator.handleRequest({
       message,
+      taskId,
+      onStep,
       context: {
         explicit: {},
         historical: [],
@@ -54,7 +69,7 @@ export async function POST(request: NextRequest) {
     }).then(result => {
       // Task nach Verarbeitung aktualisieren
       updateTask(taskId, {
-        phase: 'completed',
+        phase: result.success ? 'completed' : 'failed',
         output: result.output,
         summary: result.summary,
         totalDuration: result.totalDuration,

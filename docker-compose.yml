@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: universal-ai-agent
+    ports:
+      - "80:3000"
+    volumes:
+      - ./data:/app/data
+      - agent-workspace:/app/workspace
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AGENT_WORKSPACE=/app/workspace
+    restart: unless-stopped
+
+volumes:
+  agent-workspace:

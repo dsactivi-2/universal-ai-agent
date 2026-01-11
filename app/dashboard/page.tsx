@@ -2,6 +2,18 @@
 
 import { useEffect, useState } from 'react'
 
+interface Step {
+  id: number
+  taskId: string
+  stepNumber: number
+  tool: string
+  input: unknown
+  output: string
+  success: boolean
+  duration: number
+  createdAt: string
+}
+
 interface Task {
   id: string
   goal: string
@@ -36,8 +48,10 @@ export default function Dashboard() {
   const [filter, setFilter] = useState<string>('all')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
+  const [steps, setSteps] = useState<Step[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [sending, setSending] = useState(false)
+  const [activeTab, setActiveTab] = useState<'output' | 'steps' | 'chat'>('steps')
   const [stats, setStats] = useState<Stats>({
     total: 0, completed: 0, executing: 0, waiting: 0, failed: 0
   })
@@ -48,16 +62,27 @@ export default function Dashboard() {
     const interval = setInterval(() => {
       fetchTasks()
       fetchStats()
-    }, 5000)
+    }, 3000)
     return () => clearInterval(interval)
   }, [])
 
-  // Load messages when task is selected
+  // Load messages and steps when task is selected
   useEffect(() => {
     if (selectedTask) {
       fetchMessages(selectedTask.id)
+      fetchSteps(selectedTask.id)
     }
   }, [selectedTask?.id])
+
+  // Refresh steps for executing tasks
+  useEffect(() => {
+    if (selectedTask?.status.phase === 'executing') {
+      const interval = setInterval(() => {
+        fetchSteps(selectedTask.id)
+      }, 2000)
+      return () => clearInterval(interval)
+    }
+  }, [selectedTask?.id, selectedTask?.status.phase])
 
   const fetchTasks = async () => {
     try {
@@ -94,6 +119,17 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Failed to fetch messages:', error)
       setMessages([])
+    }
+  }
+
+  const fetchSteps = async (taskId: string) => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/steps`)
+      const data = await res.json()
+      setSteps(data.steps || [])
+    } catch (error) {
+      console.error('Failed to fetch steps:', error)
+      setSteps([])
     }
   }
 
@@ -160,6 +196,21 @@ export default function Dashboard() {
     }
   }
 
+  const getToolIcon = (tool: string) => {
+    switch (tool) {
+      case 'read_file': return '📖'
+      case 'write_file': return '✏️'
+      case 'list_files': return '📁'
+      case 'execute_bash': return '💻'
+      case 'git_command': return '🔀'
+      case 'create_directory': return '📂'
+      case 'delete_file': return '🗑️'
+      case 'search_files': return '🔍'
+      case 'task_complete': return '✅'
+      default: return '🔧'
+    }
+  }
+
   if (loading) return (
     <div className="flex justify-center items-center min-h-screen">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -170,7 +221,10 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto p-6">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Task Dashboard</h1>
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">AI Agent Dashboard</h1>
+            <p className="text-gray-600 mt-1">Autonomer Agent mit Tool-Ausführung</p>
+          </div>
           <button
             onClick={() => { fetchTasks(); fetchStats(); }}
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
@@ -231,6 +285,11 @@ export default function Dashboard() {
               <p className="text-sm text-gray-600 mb-2">
                 {new Date(task.createdAt).toLocaleString()}
               </p>
+              {task.totalCost && task.totalCost > 0 && (
+                <p className="text-xs text-gray-500 mb-2">
+                  Kosten: ${task.totalCost.toFixed(4)}
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={() => setSelectedTask(task)}
@@ -253,89 +312,171 @@ export default function Dashboard() {
           <div className="text-center py-12 text-gray-500">Keine Tasks gefunden</div>
         )}
 
-        {/* Task Detail Modal with Chat */}
+        {/* Task Detail Modal */}
         {selectedTask && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="bg-white rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
               {/* Header */}
               <div className="flex justify-between items-start p-4 border-b">
                 <div>
                   <h2 className="text-xl font-bold">{selectedTask.goal}</h2>
-                  <span className={`inline-block mt-1 px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase)}`}>
-                    {selectedTask.status.phase}
-                  </span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase)}`}>
+                      {selectedTask.status.phase}
+                    </span>
+                    {selectedTask.status.phase === 'executing' && (
+                      <span className="text-blue-500 animate-pulse text-sm">● Läuft...</span>
+                    )}
+                  </div>
                 </div>
                 <button onClick={() => setSelectedTask(null)} className="text-2xl text-gray-500 hover:text-gray-700">&times;</button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex border-b">
+                <button
+                  onClick={() => setActiveTab('steps')}
+                  className={`px-4 py-2 ${activeTab === 'steps' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
+                >
+                  📋 Steps ({steps.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('output')}
+                  className={`px-4 py-2 ${activeTab === 'output' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
+                >
+                  📄 Output
+                </button>
+                <button
+                  onClick={() => setActiveTab('chat')}
+                  className={`px-4 py-2 ${activeTab === 'chat' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
+                >
+                  💬 Chat ({messages.length})
+                </button>
               </div>
 
               {/* Content Area */}
               <div className="flex-1 overflow-y-auto p-4">
                 {/* Task Info */}
-                <div className="mb-4 p-3 bg-gray-50 rounded text-sm space-y-1">
-                  <p><strong>ID:</strong> {selectedTask.id}</p>
-                  <p><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</p>
-                  {selectedTask.totalDuration && <p><strong>Gesamtdauer:</strong> {selectedTask.totalDuration}ms</p>}
-                  {selectedTask.totalCost && <p><strong>Gesamtkosten:</strong> ${selectedTask.totalCost.toFixed(4)}</p>}
+                <div className="mb-4 p-3 bg-gray-50 rounded text-sm grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <div><strong>ID:</strong> {selectedTask.id.slice(0, 8)}...</div>
+                  <div><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</div>
+                  {selectedTask.totalDuration && <div><strong>Dauer:</strong> {(selectedTask.totalDuration / 1000).toFixed(1)}s</div>}
+                  {selectedTask.totalCost && <div><strong>Kosten:</strong> ${selectedTask.totalCost.toFixed(4)}</div>}
                 </div>
 
-                {/* Latest Output */}
-                {selectedTask.output && (
-                  <div className="mb-4">
-                    <h3 className="font-semibold mb-2">Letzte Antwort:</h3>
-                    <div className="p-3 bg-blue-50 rounded whitespace-pre-wrap text-sm max-h-48 overflow-y-auto">
-                      {selectedTask.output}
-                    </div>
-                  </div>
-                )}
-
-                {/* Conversation History */}
-                {messages.length > 0 && (
-                  <div className="mb-4">
-                    <h3 className="font-semibold mb-2">Konversation:</h3>
-                    <div className="space-y-3 max-h-64 overflow-y-auto">
-                      {messages.map(msg => (
-                        <div
-                          key={msg.id}
-                          className={`p-3 rounded ${
-                            msg.role === 'user'
-                              ? 'bg-gray-100 ml-8'
-                              : 'bg-green-50 mr-8'
-                          }`}
-                        >
-                          <div className="text-xs text-gray-500 mb-1">
-                            {msg.role === 'user' ? 'Du' : 'AI'} - {new Date(msg.createdAt).toLocaleTimeString()}
+                {/* Steps Tab */}
+                {activeTab === 'steps' && (
+                  <div className="space-y-3">
+                    {steps.length === 0 ? (
+                      <div className="text-center text-gray-500 py-8">
+                        {selectedTask.status.phase === 'executing' ? (
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                            <span>Agent arbeitet...</span>
                           </div>
-                          <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                        ) : (
+                          'Keine Steps vorhanden'
+                        )}
+                      </div>
+                    ) : (
+                      steps.map((step, idx) => (
+                        <div
+                          key={step.id}
+                          className={`p-3 rounded-lg border ${step.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">{getToolIcon(step.tool)}</span>
+                              <span className="font-medium">{step.tool}</span>
+                              <span className="text-xs text-gray-500">#{step.stepNumber}</span>
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {step.duration}ms
+                            </div>
+                          </div>
+                          <div className="text-xs text-gray-600 mb-2">
+                            <strong>Input:</strong>
+                            <pre className="mt-1 p-2 bg-white rounded overflow-x-auto">
+                              {typeof step.input === 'object' ? JSON.stringify(step.input, null, 2) : step.input}
+                            </pre>
+                          </div>
+                          <div className="text-xs">
+                            <strong>Output:</strong>
+                            <pre className="mt-1 p-2 bg-white rounded overflow-x-auto max-h-32">
+                              {step.output}
+                            </pre>
+                          </div>
                         </div>
-                      ))}
+                      ))
+                    )}
+                    {selectedTask.status.phase === 'executing' && steps.length > 0 && (
+                      <div className="flex items-center justify-center gap-2 text-blue-500 py-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                        <span className="text-sm">Weitere Steps werden ausgeführt...</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Output Tab */}
+                {activeTab === 'output' && (
+                  <div>
+                    {selectedTask.output ? (
+                      <div className="p-4 bg-gray-50 rounded whitespace-pre-wrap font-mono text-sm">
+                        {selectedTask.output}
+                      </div>
+                    ) : (
+                      <div className="text-center text-gray-500 py-8">
+                        {selectedTask.status.phase === 'executing' ? 'Noch kein Output...' : 'Kein Output'}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Chat Tab */}
+                {activeTab === 'chat' && (
+                  <div>
+                    {messages.length > 0 && (
+                      <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
+                        {messages.map(msg => (
+                          <div
+                            key={msg.id}
+                            className={`p-3 rounded ${
+                              msg.role === 'user'
+                                ? 'bg-gray-100 ml-8'
+                                : 'bg-green-50 mr-8'
+                            }`}
+                          >
+                            <div className="text-xs text-gray-500 mb-1">
+                              {msg.role === 'user' ? 'Du' : 'AI'} - {new Date(msg.createdAt).toLocaleTimeString()}
+                            </div>
+                            <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Chat Input */}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+                        placeholder="Folgenachricht eingeben..."
+                        className="flex-1 px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        disabled={sending}
+                      />
+                      <button
+                        onClick={sendMessage}
+                        disabled={sending || !newMessage.trim()}
+                        className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {sending ? 'Sende...' : 'Senden'}
+                      </button>
                     </div>
                   </div>
                 )}
-              </div>
-
-              {/* Chat Input */}
-              <div className="p-4 border-t">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-                    placeholder="Folgenachricht eingeben... (z.B. 'Führe Punkt 1 aus')"
-                    className="flex-1 px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    disabled={sending}
-                  />
-                  <button
-                    onClick={sendMessage}
-                    disabled={sending || !newMessage.trim()}
-                    className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {sending ? 'Sende...' : 'Senden'}
-                  </button>
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Schreibe eine Folgenachricht, um an diesem Task weiterzuarbeiten ohne einen neuen zu erstellen.
-                </p>
               </div>
 
               {/* Footer Actions */}
