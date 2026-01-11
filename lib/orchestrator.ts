@@ -40,6 +40,10 @@ export interface OrchestratorResponse {
   stepResults: StepResult[]
   totalDuration: number
   totalCost: number
+  // Error details
+  errorReason?: string
+  errorRecommendation?: string
+  errorStep?: string
 }
 
 const PLANNING_SYSTEM_PROMPT = `Du bist ein erfahrener Software-Architekt und Berater. Deine Aufgabe ist es, Projekte zu ANALYSIEREN und einen detaillierten PLAN zu erstellen - NOCH NICHT umzusetzen.
@@ -156,6 +160,17 @@ WICHTIGE REGELN:
 
 Arbeitsverzeichnis: /app/workspace
 Hier werden alle Dateien erstellt und Befehle ausgeführt.`
+
+const ERROR_ANALYSIS_PROMPT = `Du bist ein erfahrener Fehleranalyst. Analysiere den folgenden Fehler und gib eine strukturierte Antwort.
+
+Antworte EXAKT in diesem JSON-Format (keine Markdown-Codeblöcke, nur reines JSON):
+{
+  "reason": "Kurze Erklärung warum der Fehler aufgetreten ist (1-2 Sätze)",
+  "recommendation": "Konkrete Empfehlung was anders gemacht werden muss um den Fehler zu beheben (2-3 Sätze)",
+  "canContinue": true/false - ob mit einer Anpassung weitergemacht werden kann oder komplett neu gestartet werden muss
+}
+
+Sei konkret und hilfreich. Der User muss verstehen was schief gelaufen ist und was er tun kann.`
 
 export class Orchestrator {
   private toolExecutor: ToolExecutor
@@ -405,14 +420,63 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
       runningTasks.delete(request.taskId)
 
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+
+      // Get the last failed step if any
+      const lastFailedStep = stepResults.filter(s => !s.success).pop()
+      const errorStep = lastFailedStep ? `${lastFailedStep.tool} (Step ${lastFailedStep.step})` : undefined
+
+      // Analyze error with AI to get recommendation
+      let errorReason = errorMessage
+      let errorRecommendation = 'Bitte prüfen Sie die Fehlermeldung und versuchen Sie es erneut.'
+
+      try {
+        const analysisResponse = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: ERROR_ANALYSIS_PROMPT,
+          messages: [{
+            role: 'user',
+            content: `Aufgabe: ${request.message}
+
+Fehler: ${errorMessage}
+
+${lastFailedStep ? `Fehlgeschlagener Schritt: ${lastFailedStep.tool}
+Input: ${JSON.stringify(lastFailedStep.input)}
+Output: ${lastFailedStep.output}` : ''}
+
+Bisherige Schritte: ${stepResults.length}
+${stepResults.slice(-3).map(s => `- ${s.tool}: ${s.success ? 'OK' : 'FEHLER'}`).join('\n')}`
+          }]
+        })
+
+        const analysisText = analysisResponse.content
+          .filter(block => block.type === 'text')
+          .map(block => (block as { type: 'text'; text: string }).text)
+          .join('')
+
+        try {
+          const analysis = JSON.parse(analysisText)
+          errorReason = analysis.reason || errorMessage
+          errorRecommendation = analysis.recommendation || errorRecommendation
+        } catch {
+          // JSON parsing failed, use the raw text as recommendation
+          errorRecommendation = analysisText.slice(0, 500)
+        }
+      } catch (analysisError) {
+        console.error('Error analysis failed:', analysisError)
+      }
+
       return {
         taskId: request.taskId,
         success: false,
         output: `Error: ${errorMessage}`,
-        summary: 'Task failed with error',
+        summary: 'Task fehlgeschlagen',
         stepResults,
         totalDuration: Date.now() - startTime,
-        totalCost: 0
+        totalCost: 0,
+        errorReason,
+        errorRecommendation,
+        errorStep
       }
     }
   }

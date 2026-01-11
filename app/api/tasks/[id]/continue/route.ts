@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getTaskById, updateTask, addStep } from '@/lib/database'
+import { getTaskById, updateTask, addStep, clearTaskError } from '@/lib/database'
 import { Orchestrator, StepResult } from '@/lib/orchestrator'
 
 const orchestrator = new Orchestrator()
 
-// POST /api/tasks/[id]/approve - Approve plan and start execution
+// POST /api/tasks/[id]/continue - Continue a failed task with adjustments
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: taskId } = await params
+    const { adjustment } = await request.json()
 
     // Check if task exists
     const task = getTaskById(taskId)
@@ -18,18 +19,19 @@ export async function POST(
       return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     }
 
-    // Check if task is awaiting approval
-    if (task.status.phase !== 'awaiting_approval') {
+    // Check if task is in a failed state
+    if (task.status.phase !== 'failed') {
       return NextResponse.json(
-        { error: `Task is not awaiting approval. Current phase: ${task.status.phase}` },
+        { error: `Task ist nicht fehlgeschlagen. Aktueller Status: ${task.status.phase}` },
         { status: 400 }
       )
     }
 
-    // Update status to executing
+    // Clear error details and update status
+    clearTaskError(taskId)
     updateTask(taskId, {
       phase: 'executing',
-      summary: 'Plan genehmigt - Ausführung gestartet'
+      summary: 'Fortgesetzt mit Anpassung'
     })
 
     // Step callback to save steps to database
@@ -45,15 +47,25 @@ export async function POST(
       )
     }
 
-    // Start execution with the original goal + plan context
-    const executionMessage = `${task.goal}
+    // Build continuation message with context about what happened
+    const continuationMessage = `${task.goal}
 
-Der folgende Plan wurde genehmigt. Bitte führe ihn aus:
+## Urspruenglicher Plan
+${task.plan}
 
-${task.plan}`
+## Was bisher passiert ist
+Der Task ist fehlgeschlagen mit folgendem Fehler:
+- Grund: ${task.errorReason || 'Unbekannt'}
+- Bei Schritt: ${task.errorStep || 'Unbekannt'}
+
+## Anpassung vom Benutzer
+${adjustment || 'Bitte versuche es erneut mit einer anderen Herangehensweise.'}
+
+## Deine Aufgabe
+Setze die Arbeit fort und beruecksichtige die Anpassung des Benutzers. Behebe das Problem und fuehre den Task zu Ende.`
 
     orchestrator.handleRequest({
-      message: executionMessage,
+      message: continuationMessage,
       taskId,
       mode: 'execute',
       onStep
@@ -67,7 +79,6 @@ ${task.plan}`
           totalCost: (task.totalCost || 0) + result.totalCost
         })
       } else {
-        // Save error details for failed tasks
         updateTask(taskId, {
           phase: 'failed',
           output: result.output,
@@ -90,11 +101,11 @@ ${task.plan}`
 
     return NextResponse.json({
       success: true,
-      message: 'Plan approved - Execution started',
+      message: 'Task wird mit Anpassung fortgesetzt',
       taskId
     })
   } catch (error) {
-    console.error('Failed to approve task:', error)
-    return NextResponse.json({ error: 'Failed to approve task' }, { status: 500 })
+    console.error('Failed to continue task:', error)
+    return NextResponse.json({ error: 'Failed to continue task' }, { status: 500 })
   }
 }

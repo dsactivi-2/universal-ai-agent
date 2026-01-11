@@ -26,6 +26,15 @@ interface Task {
   updatedAt?: string
   totalDuration?: number
   totalCost?: number
+  // Action required fields
+  actionRequired?: boolean
+  actionType?: string
+  actionMessage?: string
+  actionBlocking?: boolean
+  // Error detail fields
+  errorReason?: string
+  errorRecommendation?: string
+  errorStep?: string
 }
 
 interface Message {
@@ -76,6 +85,12 @@ export default function Dashboard() {
   const [savingPlan, setSavingPlan] = useState(false)
   const [aiReview, setAiReview] = useState<{ status: string; feedback: string } | null>(null)
   const [showReviewModal, setShowReviewModal] = useState(false)
+  const [showActionModal, setShowActionModal] = useState(false)
+  const [actionInput, setActionInput] = useState('')
+  const [submittingAction, setSubmittingAction] = useState(false)
+  const [showContinueModal, setShowContinueModal] = useState(false)
+  const [adjustmentInput, setAdjustmentInput] = useState('')
+  const [continuing, setContinuing] = useState(false)
   const [stats, setStats] = useState<Stats>({
     total: 0, completed: 0, executing: 0, planning: 0,
     awaiting_approval: 0, failed: 0, stopped: 0, rejected: 0
@@ -328,6 +343,55 @@ export default function Dashboard() {
     window.open(`/api/tasks/${selectedTask.id}/files${filePath}?download=true`, '_blank')
   }
 
+  const submitActionInput = async () => {
+    if (!selectedTask || submittingAction) return
+    setSubmittingAction(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/action`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userInput: actionInput })
+      })
+      if (res.ok) {
+        fetchTasks()
+        setShowActionModal(false)
+        setActionInput('')
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
+      }
+    } catch (error) {
+      console.error('Failed to submit action:', error)
+    } finally {
+      setSubmittingAction(false)
+    }
+  }
+
+  const continueWithAdjustment = async () => {
+    if (!selectedTask || continuing) return
+    setContinuing(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/continue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adjustment: adjustmentInput })
+      })
+      if (res.ok) {
+        fetchTasks()
+        setShowContinueModal(false)
+        setAdjustmentInput('')
+        setActiveTab('steps')
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
+      }
+    } catch (error) {
+      console.error('Failed to continue task:', error)
+    } finally {
+      setContinuing(false)
+    }
+  }
+
   const filteredTasks = tasks.filter(task => {
     if (filter === 'all') return true
     return task.status.phase === filter
@@ -495,6 +559,21 @@ export default function Dashboard() {
                   Plan wartet auf Bestaetigung
                 </div>
               )}
+              {task.actionRequired && (
+                <div className={`mt-2 p-2 rounded text-sm ${
+                  task.actionBlocking
+                    ? 'bg-red-100 text-red-800 border border-red-300'
+                    : 'bg-orange-100 text-orange-800 border border-orange-300'
+                }`}>
+                  <div className="flex items-center gap-1">
+                    <span>{task.actionBlocking ? '🛑' : '⚠️'}</span>
+                    <span className="font-medium">
+                      {task.actionBlocking ? 'Wartet - Handlung noetig' : 'Handlung noetig'}
+                    </span>
+                  </div>
+                  <div className="text-xs mt-1 opacity-80">{task.actionType}</div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -511,12 +590,21 @@ export default function Dashboard() {
               <div className="flex justify-between items-start p-4 border-b">
                 <div>
                   <h2 className="text-xl font-bold">{selectedTask.goal}</h2>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase)}`}>
                       {getStatusLabel(selectedTask.status.phase)}
                     </span>
                     {(selectedTask.status.phase === 'executing' || selectedTask.status.phase === 'planning') && (
                       <span className="text-blue-500 animate-pulse text-sm">Laeuft...</span>
+                    )}
+                    {selectedTask.actionRequired && (
+                      <span className={`inline-block px-2 py-1 rounded text-xs ${
+                        selectedTask.actionBlocking
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-orange-100 text-orange-800'
+                      }`}>
+                        {selectedTask.actionBlocking ? '🛑 Wartet' : '⚠️ Handlung noetig'}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -565,20 +653,116 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* Retry Banner for failed/stopped tasks */}
+              {/* Error/Stopped/Rejected Banner with details */}
               {['failed', 'stopped', 'rejected'].includes(selectedTask.status.phase) && (
-                <div className="bg-gray-50 border-b border-gray-200 p-4 flex items-center justify-between">
-                  <span className="text-gray-800 font-medium">
-                    {selectedTask.status.phase === 'failed' ? 'Task fehlgeschlagen' :
-                     selectedTask.status.phase === 'stopped' ? 'Task wurde gestoppt' : 'Plan wurde abgelehnt'}
-                  </span>
-                  <button
-                    onClick={retryTask}
-                    disabled={retrying}
-                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
-                  >
-                    {retrying ? 'Startet neu...' : 'Neu starten'}
-                  </button>
+                <div className={`border-b p-4 ${
+                  selectedTask.status.phase === 'failed' ? 'bg-red-50 border-red-200' :
+                  selectedTask.status.phase === 'stopped' ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'
+                }`}>
+                  <div className="flex items-start gap-3 mb-4">
+                    <span className="text-2xl">
+                      {selectedTask.status.phase === 'failed' ? '❌' :
+                       selectedTask.status.phase === 'stopped' ? '⏹️' : '🚫'}
+                    </span>
+                    <div className="flex-1">
+                      <div className={`font-bold text-lg ${
+                        selectedTask.status.phase === 'failed' ? 'text-red-800' :
+                        selectedTask.status.phase === 'stopped' ? 'text-orange-800' : 'text-gray-800'
+                      }`}>
+                        {selectedTask.status.phase === 'failed' ? 'Task fehlgeschlagen' :
+                         selectedTask.status.phase === 'stopped' ? 'Task wurde gestoppt' : 'Plan wurde abgelehnt'}
+                      </div>
+
+                      {/* Error details for failed tasks */}
+                      {selectedTask.status.phase === 'failed' && selectedTask.errorReason && (
+                        <div className="mt-3 space-y-2">
+                          <div className="p-3 bg-red-100 rounded border border-red-300">
+                            <div className="text-sm font-medium text-red-800 mb-1">Fehlergrund:</div>
+                            <div className="text-red-700">{selectedTask.errorReason}</div>
+                          </div>
+
+                          {selectedTask.errorStep && (
+                            <div className="text-sm text-red-700">
+                              <strong>Fehlgeschlagen bei:</strong> {selectedTask.errorStep}
+                            </div>
+                          )}
+
+                          {selectedTask.errorRecommendation && (
+                            <div className="p-3 bg-yellow-50 rounded border border-yellow-300">
+                              <div className="text-sm font-medium text-yellow-800 mb-1">Empfehlung:</div>
+                              <div className="text-yellow-700">{selectedTask.errorRecommendation}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      onClick={() => deleteTask(selectedTask.id)}
+                      className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                    >
+                      Abbrechen & Loeschen
+                    </button>
+                    <button
+                      onClick={retryTask}
+                      disabled={retrying}
+                      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+                    >
+                      {retrying ? 'Startet neu...' : 'Komplett neu starten'}
+                    </button>
+                    {selectedTask.status.phase === 'failed' && selectedTask.errorRecommendation && (
+                      <button
+                        onClick={() => {
+                          setAdjustmentInput(selectedTask.errorRecommendation || '')
+                          setShowContinueModal(true)
+                        }}
+                        className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                      >
+                        Mit Anpassung fortfahren
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Required Banner */}
+              {selectedTask.actionRequired && (
+                <div className={`border-b p-4 ${
+                  selectedTask.actionBlocking
+                    ? 'bg-red-50 border-red-200'
+                    : 'bg-orange-50 border-orange-200'
+                }`}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{selectedTask.actionBlocking ? '🛑' : '⚠️'}</span>
+                      <div>
+                        <div className={`font-bold ${selectedTask.actionBlocking ? 'text-red-800' : 'text-orange-800'}`}>
+                          {selectedTask.actionBlocking
+                            ? 'Task wartet - Eingabe erforderlich'
+                            : 'Handlung erforderlich (Task laeuft weiter)'}
+                        </div>
+                        <div className={`text-sm mt-1 ${selectedTask.actionBlocking ? 'text-red-700' : 'text-orange-700'}`}>
+                          <strong>Typ:</strong> {selectedTask.actionType}
+                        </div>
+                        <div className={`text-sm mt-1 ${selectedTask.actionBlocking ? 'text-red-700' : 'text-orange-700'}`}>
+                          {selectedTask.actionMessage}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowActionModal(true)}
+                      className={`px-4 py-2 text-white rounded ${
+                        selectedTask.actionBlocking
+                          ? 'bg-red-500 hover:bg-red-600'
+                          : 'bg-orange-500 hover:bg-orange-600'
+                      }`}
+                    >
+                      Eingabe liefern
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -951,6 +1135,136 @@ export default function Dashboard() {
                 >
                   {aiReview.status === 'APPROVED' ? 'Verstanden' : 'Trotzdem fortfahren'}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Action Input Modal */}
+        {showActionModal && selectedTask && selectedTask.actionRequired && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-lg w-full max-w-lg">
+              <div className={`p-4 rounded-t-lg ${
+                selectedTask.actionBlocking ? 'bg-red-500' : 'bg-orange-500'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-white">
+                    <span className="text-xl">{selectedTask.actionBlocking ? '🛑' : '⚠️'}</span>
+                    <h3 className="font-bold">Eingabe erforderlich</h3>
+                  </div>
+                  <button
+                    onClick={() => { setShowActionModal(false); setActionInput(''); }}
+                    className="text-white text-2xl hover:opacity-70"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+              <div className="p-4">
+                <div className="mb-4 p-3 bg-gray-50 rounded">
+                  <div className="text-sm text-gray-500 mb-1">
+                    <strong>Typ:</strong> {selectedTask.actionType}
+                  </div>
+                  <div className="text-gray-700">
+                    {selectedTask.actionMessage}
+                  </div>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Deine Eingabe
+                  </label>
+                  <textarea
+                    value={actionInput}
+                    onChange={(e) => setActionInput(e.target.value)}
+                    placeholder="z.B. API Key, Account-Daten, Entscheidung..."
+                    className="w-full h-32 p-3 border rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setShowActionModal(false); setActionInput(''); }}
+                    disabled={submittingAction}
+                    className="flex-1 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-50"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    onClick={submitActionInput}
+                    disabled={submittingAction || !actionInput.trim()}
+                    className={`flex-1 px-4 py-2 text-white rounded disabled:opacity-50 ${
+                      selectedTask.actionBlocking
+                        ? 'bg-red-500 hover:bg-red-600'
+                        : 'bg-orange-500 hover:bg-orange-600'
+                    }`}
+                  >
+                    {submittingAction ? 'Wird gesendet...' : 'Absenden'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Continue with Adjustment Modal */}
+        {showContinueModal && selectedTask && selectedTask.status.phase === 'failed' && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-lg w-full max-w-2xl">
+              <div className="p-4 rounded-t-lg bg-green-500">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-white">
+                    <span className="text-xl">🔧</span>
+                    <h3 className="font-bold">Mit Anpassung fortfahren</h3>
+                  </div>
+                  <button
+                    onClick={() => { setShowContinueModal(false); setAdjustmentInput(''); }}
+                    className="text-white text-2xl hover:opacity-70"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+              <div className="p-4">
+                {/* Error context */}
+                <div className="mb-4 p-3 bg-red-50 rounded border border-red-200">
+                  <div className="text-sm font-medium text-red-800 mb-1">Urspruenglicher Fehler:</div>
+                  <div className="text-red-700 text-sm">{selectedTask.errorReason}</div>
+                  {selectedTask.errorStep && (
+                    <div className="text-red-600 text-xs mt-1">Bei: {selectedTask.errorStep}</div>
+                  )}
+                </div>
+
+                {/* Adjustment input */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Deine Anpassung / Korrektur
+                  </label>
+                  <textarea
+                    value={adjustmentInput}
+                    onChange={(e) => setAdjustmentInput(e.target.value)}
+                    placeholder="Beschreibe was anders gemacht werden soll, z.B. andere Technologie, anderer Ansatz, fehlende API Keys..."
+                    className="w-full h-40 p-3 border rounded focus:ring-2 focus:ring-green-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Die KI wird mit dieser Anpassung fortfahren und versuchen den Fehler zu beheben.
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setShowContinueModal(false); setAdjustmentInput(''); }}
+                    disabled={continuing}
+                    className="flex-1 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-50"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    onClick={continueWithAdjustment}
+                    disabled={continuing || !adjustmentInput.trim()}
+                    className="flex-1 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
+                  >
+                    {continuing ? 'Wird fortgesetzt...' : 'Fortfahren'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

@@ -36,6 +36,31 @@ try {
   // Column already exists
 }
 
+// Add action_required columns for user input tracking
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN action_required INTEGER DEFAULT 0`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN action_type TEXT`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN action_message TEXT`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN action_blocking INTEGER DEFAULT 0`)
+} catch { /* exists */ }
+
+// Add error detail columns for failed tasks
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN error_reason TEXT`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN error_recommendation TEXT`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN error_step TEXT`)
+} catch { /* exists */ }
+
 // Messages table for task conversations
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
@@ -75,6 +100,15 @@ export interface Task {
   totalCost?: number
   createdAt: string
   updatedAt: string
+  // Action required fields
+  actionRequired?: boolean
+  actionType?: string
+  actionMessage?: string
+  actionBlocking?: boolean
+  // Error detail fields
+  errorReason?: string
+  errorRecommendation?: string
+  errorStep?: string
 }
 
 export interface Message {
@@ -119,7 +153,14 @@ export function getAllTasks(): Task[] {
     totalDuration: row.total_duration,
     totalCost: row.total_cost,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    actionRequired: row.action_required === 1,
+    actionType: row.action_type,
+    actionMessage: row.action_message,
+    actionBlocking: row.action_blocking === 1,
+    errorReason: row.error_reason,
+    errorRecommendation: row.error_recommendation,
+    errorStep: row.error_step
   }))
 }
 
@@ -140,7 +181,14 @@ export function getTaskById(id: string): Task | null {
     totalDuration: row.total_duration,
     totalCost: row.total_cost,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    actionRequired: row.action_required === 1,
+    actionType: row.action_type,
+    actionMessage: row.action_message,
+    actionBlocking: row.action_blocking === 1,
+    errorReason: row.error_reason,
+    errorRecommendation: row.error_recommendation,
+    errorStep: row.error_step
   }
 }
 
@@ -171,6 +219,13 @@ export function updateTask(id: string, updates: Partial<{
   summary: string
   totalDuration: number
   totalCost: number
+  actionRequired: boolean
+  actionType: string
+  actionMessage: string
+  actionBlocking: boolean
+  errorReason: string
+  errorRecommendation: string
+  errorStep: string
 }>): Task | null {
   const now = new Date().toISOString()
   const existing = getTaskById(id)
@@ -185,6 +240,13 @@ export function updateTask(id: string, updates: Partial<{
         summary = COALESCE(?, summary),
         total_duration = COALESCE(?, total_duration),
         total_cost = COALESCE(?, total_cost),
+        action_required = COALESCE(?, action_required),
+        action_type = COALESCE(?, action_type),
+        action_message = COALESCE(?, action_message),
+        action_blocking = COALESCE(?, action_blocking),
+        error_reason = COALESCE(?, error_reason),
+        error_recommendation = COALESCE(?, error_recommendation),
+        error_step = COALESCE(?, error_step),
         updated_at = ?
     WHERE id = ?
   `)
@@ -196,10 +258,68 @@ export function updateTask(id: string, updates: Partial<{
     updates.summary,
     updates.totalDuration,
     updates.totalCost,
+    updates.actionRequired !== undefined ? (updates.actionRequired ? 1 : 0) : null,
+    updates.actionType,
+    updates.actionMessage,
+    updates.actionBlocking !== undefined ? (updates.actionBlocking ? 1 : 0) : null,
+    updates.errorReason,
+    updates.errorRecommendation,
+    updates.errorStep,
     now,
     id
   )
 
+  return getTaskById(id)
+}
+
+// Set action required on task
+export function setTaskAction(id: string, actionType: string, actionMessage: string, blocking: boolean): Task | null {
+  return updateTask(id, {
+    actionRequired: true,
+    actionType,
+    actionMessage,
+    actionBlocking: blocking
+  })
+}
+
+// Clear action required on task
+export function clearTaskAction(id: string): Task | null {
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`
+    UPDATE tasks
+    SET action_required = 0,
+        action_type = NULL,
+        action_message = NULL,
+        action_blocking = 0,
+        updated_at = ?
+    WHERE id = ?
+  `)
+  stmt.run(now, id)
+  return getTaskById(id)
+}
+
+// Set error details on task
+export function setTaskError(id: string, reason: string, recommendation: string, step?: string): Task | null {
+  return updateTask(id, {
+    phase: 'failed',
+    errorReason: reason,
+    errorRecommendation: recommendation,
+    errorStep: step || ''
+  })
+}
+
+// Clear error details on task (for retry/continue)
+export function clearTaskError(id: string): Task | null {
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`
+    UPDATE tasks
+    SET error_reason = NULL,
+        error_recommendation = NULL,
+        error_step = NULL,
+        updated_at = ?
+    WHERE id = ?
+  `)
+  stmt.run(now, id)
   return getTaskById(id)
 }
 
