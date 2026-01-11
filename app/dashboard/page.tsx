@@ -73,6 +73,9 @@ export default function Dashboard() {
   const [showRejectModal, setShowRejectModal] = useState(false)
   const [editingPlan, setEditingPlan] = useState(false)
   const [editedPlan, setEditedPlan] = useState('')
+  const [savingPlan, setSavingPlan] = useState(false)
+  const [aiReview, setAiReview] = useState<{ status: string; feedback: string } | null>(null)
+  const [showReviewModal, setShowReviewModal] = useState(false)
   const [stats, setStats] = useState<Stats>({
     total: 0, completed: 0, executing: 0, planning: 0,
     awaiting_approval: 0, failed: 0, stopped: 0, rejected: 0
@@ -250,22 +253,30 @@ export default function Dashboard() {
   }
 
   const savePlan = async () => {
-    if (!selectedTask || !editedPlan.trim()) return
+    if (!selectedTask || !editedPlan.trim() || savingPlan) return
+    setSavingPlan(true)
     try {
       const res = await fetch(`/api/tasks/${selectedTask.id}/edit-plan`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: editedPlan })
       })
+      const data = await res.json()
       if (res.ok) {
         fetchTasks()
         setEditingPlan(false)
+        // Show AI review feedback
+        if (data.review) {
+          setAiReview(data.review)
+          setShowReviewModal(true)
+        }
       } else {
-        const error = await res.json()
-        alert('Fehler: ' + error.error)
+        alert('Fehler: ' + data.error)
       }
     } catch (error) {
       console.error('Failed to save plan:', error)
+    } finally {
+      setSavingPlan(false)
     }
   }
 
@@ -640,13 +651,22 @@ export default function Dashboard() {
                             <div className="flex gap-2 mt-2">
                               <button
                                 onClick={savePlan}
-                                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                                disabled={savingPlan}
+                                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
                               >
-                                Speichern
+                                {savingPlan ? (
+                                  <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                    KI analysiert...
+                                  </>
+                                ) : (
+                                  'Speichern & Pruefen'
+                                )}
                               </button>
                               <button
                                 onClick={() => setEditingPlan(false)}
-                                className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                                disabled={savingPlan}
+                                className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-50"
                               >
                                 Abbrechen
                               </button>
@@ -871,6 +891,66 @@ export default function Dashboard() {
                     Neuer Plan
                   </button>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* AI Review Modal */}
+        {showReviewModal && aiReview && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+              <div className={`p-4 rounded-t-lg flex items-center justify-between ${
+                aiReview.status === 'APPROVED' ? 'bg-green-500' : 'bg-yellow-500'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{aiReview.status === 'APPROVED' ? '✅' : '⚠️'}</span>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">
+                      {aiReview.status === 'APPROVED' ? 'Plan genehmigt' : 'Ueberarbeitung empfohlen'}
+                    </h3>
+                    <p className="text-white text-sm opacity-90">
+                      {aiReview.status === 'APPROVED'
+                        ? 'Die KI hat deinen bearbeiteten Plan analysiert und fuer gut befunden.'
+                        : 'Die KI hat moegliche Probleme in deinem Plan gefunden.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className="text-white text-2xl hover:opacity-70"
+                >
+                  &times;
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="prose prose-sm max-w-none whitespace-pre-wrap">
+                  {aiReview.feedback}
+                </div>
+              </div>
+              <div className="p-4 border-t flex gap-2">
+                {aiReview.status !== 'APPROVED' && (
+                  <button
+                    onClick={() => {
+                      setShowReviewModal(false)
+                      setEditingPlan(true)
+                      setEditedPlan(selectedTask?.plan || '')
+                    }}
+                    className="flex-1 px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600"
+                  >
+                    Plan nochmal bearbeiten
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className={`flex-1 px-4 py-2 rounded ${
+                    aiReview.status === 'APPROVED'
+                      ? 'bg-green-500 text-white hover:bg-green-600'
+                      : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                  }`}
+                >
+                  {aiReview.status === 'APPROVED' ? 'Verstanden' : 'Trotzdem fortfahren'}
+                </button>
               </div>
             </div>
           </div>
