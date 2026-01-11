@@ -6,6 +6,9 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
 })
 
+// Track running tasks for stop functionality
+const runningTasks = new Map<string, { aborted: boolean }>()
+
 export interface StepResult {
   step: number
   tool: string
@@ -162,6 +165,21 @@ export class Orchestrator {
     this.toolExecutor = new ToolExecutor()
   }
 
+  // Stop a running task
+  static stopTask(taskId: string): boolean {
+    const task = runningTasks.get(taskId)
+    if (task) {
+      task.aborted = true
+      return true
+    }
+    return false
+  }
+
+  // Check if task is running
+  static isTaskRunning(taskId: string): boolean {
+    return runningTasks.has(taskId)
+  }
+
   async handleRequest(request: OrchestratorRequest): Promise<OrchestratorResponse> {
     if (request.mode === 'plan') {
       return this.createPlan(request)
@@ -268,7 +286,25 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
       let iteration = 0
       let finalOutput = ''
 
+      // Register task as running
+      runningTasks.set(request.taskId, { aborted: false })
+
       while (!isComplete && iteration < this.maxIterations) {
+        // Check if task was stopped
+        const taskState = runningTasks.get(request.taskId)
+        if (taskState?.aborted) {
+          runningTasks.delete(request.taskId)
+          return {
+            taskId: request.taskId,
+            success: false,
+            output: 'Task wurde abgebrochen.',
+            summary: 'Task abgebrochen',
+            stepResults,
+            totalDuration: Date.now() - startTime,
+            totalCost: (totalInputTokens * 0.003 + totalOutputTokens * 0.015) / 1000
+          }
+        }
+
         iteration++
 
         const response = await anthropic.messages.create({
@@ -351,6 +387,9 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
 
       const cost = (totalInputTokens * 0.003 + totalOutputTokens * 0.015) / 1000
 
+      // Cleanup running task
+      runningTasks.delete(request.taskId)
+
       return {
         taskId: request.taskId,
         success: true,
@@ -362,6 +401,9 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
       }
 
     } catch (error) {
+      // Cleanup running task on error
+      runningTasks.delete(request.taskId)
+
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       return {
         taskId: request.taskId,
