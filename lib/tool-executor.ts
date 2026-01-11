@@ -202,7 +202,7 @@ export class ToolExecutor {
             const lines = content.split('\n')
             const matchingLines = lines
               .map((line, i) => ({ line, num: i + 1 }))
-              .filter(({ line }) => line.includes(input.content))
+              .filter(({ line }) => input.content && line.includes(input.content))
               .slice(0, 5) // Limit to 5 matches per file
               .map(({ line, num }) => `  ${num}: ${line.slice(0, 100)}`)
 
