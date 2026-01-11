@@ -18,7 +18,8 @@ db.exec(`
     id TEXT PRIMARY KEY,
     goal TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'waiting',
-    phase TEXT NOT NULL DEFAULT 'waiting',
+    phase TEXT NOT NULL DEFAULT 'planning',
+    plan TEXT,
     output TEXT,
     summary TEXT,
     total_duration INTEGER DEFAULT 0,
@@ -27,6 +28,13 @@ db.exec(`
     updated_at TEXT NOT NULL
   )
 `)
+
+// Add plan column if not exists (for existing DBs)
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN plan TEXT`)
+} catch {
+  // Column already exists
+}
 
 // Messages table for task conversations
 db.exec(`
@@ -60,6 +68,7 @@ export interface Task {
   id: string
   goal: string
   status: { phase: string }
+  plan?: string
   output?: string
   summary?: string
   totalDuration?: number
@@ -104,6 +113,7 @@ export function getAllTasks(): Task[] {
     id: row.id,
     goal: row.goal,
     status: { phase: row.phase },
+    plan: row.plan,
     output: row.output,
     summary: row.summary,
     totalDuration: row.total_duration,
@@ -124,6 +134,7 @@ export function getTaskById(id: string): Task | null {
     id: row.id,
     goal: row.goal,
     status: { phase: row.phase },
+    plan: row.plan,
     output: row.output,
     summary: row.summary,
     totalDuration: row.total_duration,
@@ -155,6 +166,7 @@ export function createTask(input: CreateTaskInput): Task {
 // Update task
 export function updateTask(id: string, updates: Partial<{
   phase: string
+  plan: string
   output: string
   summary: string
   totalDuration: number
@@ -168,6 +180,7 @@ export function updateTask(id: string, updates: Partial<{
   const stmt = db.prepare(`
     UPDATE tasks
     SET phase = COALESCE(?, phase),
+        plan = COALESCE(?, plan),
         output = COALESCE(?, output),
         summary = COALESCE(?, summary),
         total_duration = COALESCE(?, total_duration),
@@ -178,6 +191,7 @@ export function updateTask(id: string, updates: Partial<{
 
   stmt.run(
     updates.phase,
+    updates.plan,
     updates.output,
     updates.summary,
     updates.totalDuration,
@@ -206,7 +220,8 @@ export function getTaskStats() {
       COUNT(*) as total,
       SUM(CASE WHEN phase = 'completed' THEN 1 ELSE 0 END) as completed,
       SUM(CASE WHEN phase = 'executing' THEN 1 ELSE 0 END) as executing,
-      SUM(CASE WHEN phase = 'waiting' THEN 1 ELSE 0 END) as waiting,
+      SUM(CASE WHEN phase = 'planning' THEN 1 ELSE 0 END) as planning,
+      SUM(CASE WHEN phase = 'awaiting_approval' THEN 1 ELSE 0 END) as awaiting_approval,
       SUM(CASE WHEN phase = 'failed' THEN 1 ELSE 0 END) as failed
     FROM tasks
   `)

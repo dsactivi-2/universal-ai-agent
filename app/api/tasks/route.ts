@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Neuen Task erstellen
+// POST - Neuen Task erstellen (startet mit Planning)
 export async function POST(request: NextRequest) {
   try {
     const { message } = await request.json()
@@ -35,46 +35,37 @@ export async function POST(request: NextRequest) {
 
     const taskId = uuidv4()
 
-    // Task in DB speichern
+    // Task in DB speichern mit Phase "planning"
     const task = createTask({
       id: taskId,
       goal: message,
-      phase: 'executing'
+      phase: 'planning'
     })
 
-    // Step callback to save steps to database
-    const onStep = (step: StepResult) => {
-      addStep(
-        taskId,
-        step.step,
-        step.tool,
-        step.input,
-        step.output,
-        step.success,
-        step.duration
-      )
-    }
-
-    // Orchestrator starten (async)
+    // Orchestrator im Planning-Modus starten (async)
     orchestrator.handleRequest({
       message,
       taskId,
-      onStep,
-      context: {
-        explicit: {},
-        historical: [],
-        conversational: [],
-        preferences: {}
-      }
+      mode: 'plan'
     }).then(result => {
-      // Task nach Verarbeitung aktualisieren
-      updateTask(taskId, {
-        phase: result.success ? 'completed' : 'failed',
-        output: result.output,
-        summary: result.summary,
-        totalDuration: result.totalDuration,
-        totalCost: result.totalCost
-      })
+      if (result.success && result.plan) {
+        // Plan erstellt - warte auf Bestätigung
+        updateTask(taskId, {
+          phase: 'awaiting_approval',
+          plan: result.plan,
+          output: result.output,
+          summary: 'Plan erstellt - Warte auf Bestätigung',
+          totalDuration: result.totalDuration,
+          totalCost: result.totalCost
+        })
+      } else {
+        // Planung fehlgeschlagen
+        updateTask(taskId, {
+          phase: 'failed',
+          output: result.output,
+          summary: result.summary
+        })
+      }
     }).catch(error => {
       updateTask(taskId, {
         phase: 'failed',
@@ -85,7 +76,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       taskId: task.id,
       success: true,
-      message: 'Task created and processing started'
+      message: 'Task created - Planning started'
     })
   } catch (error) {
     console.error('Failed to create task:', error)
@@ -120,13 +111,13 @@ export async function DELETE(request: NextRequest) {
 // PATCH - Task aktualisieren
 export async function PATCH(request: NextRequest) {
   try {
-    const { id, phase, output, summary } = await request.json()
+    const { id, phase, output, summary, plan } = await request.json()
 
     if (!id) {
       return NextResponse.json({ error: 'Task ID is required' }, { status: 400 })
     }
 
-    const updated = updateTask(id, { phase, output, summary })
+    const updated = updateTask(id, { phase, output, summary, plan })
 
     if (!updated) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 })
