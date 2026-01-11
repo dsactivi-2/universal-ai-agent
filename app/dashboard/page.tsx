@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 
 interface Step {
   id: number
@@ -376,6 +377,19 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Navigation */}
+      <nav className="bg-white shadow-sm border-b">
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+          <Link href="/" className="text-xl font-bold text-gray-900">Universal AI Agent</Link>
+          <div className="flex gap-2">
+            <Link href="/chat" className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+              Chat
+            </Link>
+            <span className="px-4 py-2 bg-blue-500 text-white rounded-lg">Dashboard</span>
+          </div>
+        </div>
+      </nav>
+
       <div className="container mx-auto p-6">
         <div className="flex justify-between items-center mb-8">
           <div>

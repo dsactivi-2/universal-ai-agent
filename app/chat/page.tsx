@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 
 export default function Chat() {
   const [message, setMessage] = useState('')
@@ -26,8 +27,22 @@ export default function Chat() {
   }
 
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">AI Agent Chat</h1>
+    <div className="min-h-screen bg-gray-50">
+      {/* Navigation */}
+      <nav className="bg-white shadow-sm border-b">
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+          <Link href="/" className="text-xl font-bold text-gray-900">Universal AI Agent</Link>
+          <div className="flex gap-2">
+            <span className="px-4 py-2 bg-blue-500 text-white rounded-lg">Chat</span>
+            <Link href="/dashboard" className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+              Dashboard
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      <div className="container mx-auto p-6">
+        <h1 className="text-2xl font-bold mb-4">Neuen Task erstellen</h1>
       <form onSubmit={handleSubmit} className="space-y-4">
         <textarea
           id="chat-input"
@@ -46,7 +61,15 @@ export default function Chat() {
           {loading ? 'Processing...' : 'Submit Task'}
         </button>
       </form>
-      {response && <p className="mt-4">{response}</p>}
+        {response && (
+          <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <p className="text-green-800">{response}</p>
+            <Link href="/dashboard" className="text-blue-600 hover:underline mt-2 inline-block">
+              → Zum Dashboard
+            </Link>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
