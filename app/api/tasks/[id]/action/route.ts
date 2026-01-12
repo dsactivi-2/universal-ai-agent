@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, setTaskAction, clearTaskAction, addMessage } from '@/lib/database'
 import { v4 as uuidv4 } from 'uuid'
 import { requireAuth } from '@/lib/auth'
+import { validateBody, validateParams, TaskIdParamSchema, SetActionSchema, ClearActionSchema } from '@/lib/validation'
 
 // POST /api/tasks/[id]/action - Set action required
 export async function POST(
@@ -13,15 +14,17 @@ export async function POST(
     const authResult = requireAuth(request)
     if ('error' in authResult) return authResult.error
 
+    // Params validieren
     const { id: taskId } = await params
-    const { actionType, actionMessage, blocking } = await request.json()
+    const paramResult = validateParams(TaskIdParamSchema, { id: taskId })
+    if (!paramResult.success) return paramResult.error
 
-    if (!actionType || !actionMessage) {
-      return NextResponse.json(
-        { error: 'actionType and actionMessage are required' },
-        { status: 400 }
-      )
-    }
+    // Body validieren
+    const body = await request.json()
+    const bodyResult = validateBody(SetActionSchema, body)
+    if (!bodyResult.success) return bodyResult.error
+
+    const { actionType, actionMessage, blocking } = bodyResult.data
 
     const task = getTaskById(taskId)
     if (!task) {
@@ -51,9 +54,17 @@ export async function DELETE(
     const authResult = requireAuth(request)
     if ('error' in authResult) return authResult.error
 
+    // Params validieren
     const { id: taskId } = await params
+    const paramResult = validateParams(TaskIdParamSchema, { id: taskId })
+    if (!paramResult.success) return paramResult.error
+
+    // Body validieren (optional body)
     const body = await request.json().catch(() => ({}))
-    const { userInput } = body
+    const bodyResult = validateBody(ClearActionSchema, body)
+    if (!bodyResult.success) return bodyResult.error
+
+    const { userInput } = bodyResult.data
 
     const task = getTaskById(taskId)
     if (!task) {

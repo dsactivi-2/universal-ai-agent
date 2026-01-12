@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask } from '@/lib/database'
 import { Orchestrator } from '@/lib/orchestrator'
 import { requireAuth } from '@/lib/auth'
+import { validateBody, validateParams, TaskIdParamSchema, RejectTaskSchema } from '@/lib/validation'
 
 const orchestrator = new Orchestrator()
 
@@ -15,9 +16,17 @@ export async function POST(
     const authResult = requireAuth(request)
     if ('error' in authResult) return authResult.error
 
+    // Params validieren
     const { id: taskId } = await params
+    const paramResult = validateParams(TaskIdParamSchema, { id: taskId })
+    if (!paramResult.success) return paramResult.error
+
+    // Body validieren
     const body = await request.json().catch(() => ({}))
-    const { feedback, regenerate = false } = body as { feedback?: string; regenerate?: boolean }
+    const bodyResult = validateBody(RejectTaskSchema, body)
+    if (!bodyResult.success) return bodyResult.error
+
+    const { feedback, regenerate } = bodyResult.data
 
     // Check if task exists
     const task = getTaskById(taskId)

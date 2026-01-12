@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask } from '@/lib/database'
 import Anthropic from '@anthropic-ai/sdk'
 import { authAndLLMRateLimit } from '@/lib/auth'
+import { validateBody, validateParams, TaskIdParamSchema, EditPlanSchema } from '@/lib/validation'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
@@ -41,12 +42,17 @@ export async function PATCH(
     const authResult = authAndLLMRateLimit(request)
     if ('error' in authResult) return authResult.error
 
+    // Params validieren
     const { id: taskId } = await params
-    const { plan } = await request.json()
+    const paramResult = validateParams(TaskIdParamSchema, { id: taskId })
+    if (!paramResult.success) return paramResult.error
 
-    if (!plan || typeof plan !== 'string') {
-      return NextResponse.json({ error: 'Plan is required' }, { status: 400 })
-    }
+    // Body validieren
+    const body = await request.json()
+    const bodyResult = validateBody(EditPlanSchema, body)
+    if (!bodyResult.success) return bodyResult.error
+
+    const { plan } = bodyResult.data
 
     // Check if task exists
     const task = getTaskById(taskId)
