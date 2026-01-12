@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 
 interface Step {
   id: number
@@ -25,6 +26,20 @@ interface Task {
   updatedAt?: string
   totalDuration?: number
   totalCost?: number
+  // Action required fields
+  actionRequired?: boolean
+  actionType?: string
+  actionMessage?: string
+  actionBlocking?: boolean
+  // Error detail fields
+  errorReason?: string
+  errorRecommendation?: string
+  errorStep?: string
+  // Cost estimation and progress
+  estimatedCost?: number
+  estimatedSteps?: number
+  currentStep?: number
+  progress?: number
 }
 
 interface Message {
@@ -35,6 +50,14 @@ interface Message {
   createdAt: string
 }
 
+interface FileInfo {
+  name: string
+  path: string
+  size: number
+  isDirectory: boolean
+  modified: string
+}
+
 interface Stats {
   total: number
   completed: number
@@ -42,6 +65,8 @@ interface Stats {
   planning: number
   awaiting_approval: number
   failed: number
+  stopped: number
+  rejected: number
 }
 
 export default function Dashboard() {
@@ -51,12 +76,29 @@ export default function Dashboard() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [steps, setSteps] = useState<Step[]>([])
+  const [files, setFiles] = useState<FileInfo[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [approving, setApproving] = useState(false)
-  const [activeTab, setActiveTab] = useState<'plan' | 'steps' | 'output' | 'chat'>('plan')
+  const [stopping, setStopping] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const [activeTab, setActiveTab] = useState<'plan' | 'steps' | 'output' | 'chat' | 'files'>('plan')
+  const [rejectFeedback, setRejectFeedback] = useState('')
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [editingPlan, setEditingPlan] = useState(false)
+  const [editedPlan, setEditedPlan] = useState('')
+  const [savingPlan, setSavingPlan] = useState(false)
+  const [aiReview, setAiReview] = useState<{ status: string; feedback: string } | null>(null)
+  const [showReviewModal, setShowReviewModal] = useState(false)
+  const [showActionModal, setShowActionModal] = useState(false)
+  const [actionInput, setActionInput] = useState('')
+  const [submittingAction, setSubmittingAction] = useState(false)
+  const [showContinueModal, setShowContinueModal] = useState(false)
+  const [adjustmentInput, setAdjustmentInput] = useState('')
+  const [continuing, setContinuing] = useState(false)
   const [stats, setStats] = useState<Stats>({
-    total: 0, completed: 0, executing: 0, planning: 0, awaiting_approval: 0, failed: 0
+    total: 0, completed: 0, executing: 0, planning: 0,
+    awaiting_approval: 0, failed: 0, stopped: 0, rejected: 0
   })
 
   useEffect(() => {
@@ -73,7 +115,7 @@ export default function Dashboard() {
     if (selectedTask) {
       fetchMessages(selectedTask.id)
       fetchSteps(selectedTask.id)
-      // Set default tab based on phase
+      fetchFiles(selectedTask.id)
       if (selectedTask.status.phase === 'awaiting_approval' || selectedTask.status.phase === 'planning') {
         setActiveTab('plan')
       } else if (selectedTask.status.phase === 'executing') {
@@ -139,13 +181,22 @@ export default function Dashboard() {
     }
   }
 
+  const fetchFiles = async (taskId: string) => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/files`)
+      const data = await res.json()
+      setFiles(data.taskFiles || [])
+    } catch (error) {
+      console.error('Failed to fetch files:', error)
+      setFiles([])
+    }
+  }
+
   const approveTask = async () => {
     if (!selectedTask || approving) return
     setApproving(true)
     try {
-      const res = await fetch(`/api/tasks/${selectedTask.id}/approve`, {
-        method: 'POST'
-      })
+      const res = await fetch(`/api/tasks/${selectedTask.id}/approve`, { method: 'POST' })
       if (res.ok) {
         fetchTasks()
         setActiveTab('steps')
@@ -161,21 +212,91 @@ export default function Dashboard() {
     }
   }
 
-  const rejectTask = async () => {
+  const rejectTask = async (regenerate: boolean = false) => {
     if (!selectedTask) return
-    if (!confirm('Plan wirklich ablehnen?')) return
     try {
-      const res = await fetch('/api/tasks', {
-        method: 'PATCH',
+      const res = await fetch(`/api/tasks/${selectedTask.id}/reject`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: selectedTask.id, phase: 'failed', summary: 'Plan abgelehnt' })
+        body: JSON.stringify({ feedback: rejectFeedback, regenerate })
       })
       if (res.ok) {
         fetchTasks()
-        setSelectedTask(null)
+        setShowRejectModal(false)
+        setRejectFeedback('')
+        if (!regenerate) setSelectedTask(null)
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
       }
     } catch (error) {
       console.error('Failed to reject:', error)
+    }
+  }
+
+  const stopTask = async () => {
+    if (!selectedTask || stopping) return
+    if (!confirm('Task wirklich abbrechen?')) return
+    setStopping(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/stop`, { method: 'POST' })
+      if (res.ok) {
+        fetchTasks()
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
+      }
+    } catch (error) {
+      console.error('Failed to stop:', error)
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  const retryTask = async () => {
+    if (!selectedTask || retrying) return
+    setRetrying(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/retry`, { method: 'POST' })
+      if (res.ok) {
+        fetchTasks()
+        setActiveTab('plan')
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
+      }
+    } catch (error) {
+      console.error('Failed to retry:', error)
+    } finally {
+      setRetrying(false)
+    }
+  }
+
+  const savePlan = async () => {
+    if (!selectedTask || !editedPlan.trim() || savingPlan) return
+    setSavingPlan(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/edit-plan`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: editedPlan })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        fetchTasks()
+        setEditingPlan(false)
+        // Show AI review feedback
+        if (data.review) {
+          setAiReview(data.review)
+          setShowReviewModal(true)
+        }
+      } else {
+        alert('Fehler: ' + data.error)
+      }
+    } catch (error) {
+      console.error('Failed to save plan:', error)
+    } finally {
+      setSavingPlan(false)
     }
   }
 
@@ -203,14 +324,13 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error('Failed to send message:', error)
-      alert('Fehler beim Senden')
     } finally {
       setSending(false)
     }
   }
 
   const deleteTask = async (taskId: string) => {
-    if (!confirm('Task wirklich löschen?')) return
+    if (!confirm('Task wirklich loeschen?')) return
     try {
       const res = await fetch(`/api/tasks?id=${taskId}`, { method: 'DELETE' })
       if (res.ok) {
@@ -223,29 +343,93 @@ export default function Dashboard() {
     }
   }
 
+  const downloadFile = async (filePath: string) => {
+    if (!selectedTask) return
+    window.open(`/api/tasks/${selectedTask.id}/files${filePath}?download=true`, '_blank')
+  }
+
+  const submitActionInput = async () => {
+    if (!selectedTask || submittingAction) return
+    setSubmittingAction(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/action`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userInput: actionInput })
+      })
+      if (res.ok) {
+        fetchTasks()
+        setShowActionModal(false)
+        setActionInput('')
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
+      }
+    } catch (error) {
+      console.error('Failed to submit action:', error)
+    } finally {
+      setSubmittingAction(false)
+    }
+  }
+
+  const continueWithAdjustment = async () => {
+    if (!selectedTask || continuing) return
+    setContinuing(true)
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/continue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adjustment: adjustmentInput })
+      })
+      if (res.ok) {
+        fetchTasks()
+        setShowContinueModal(false)
+        setAdjustmentInput('')
+        setActiveTab('steps')
+      } else {
+        const error = await res.json()
+        alert('Fehler: ' + error.error)
+      }
+    } catch (error) {
+      console.error('Failed to continue task:', error)
+    } finally {
+      setContinuing(false)
+    }
+  }
+
   const filteredTasks = tasks.filter(task => {
     if (filter === 'all') return true
+    if (filter === 'action_required') return task.actionRequired === true
     return task.status.phase === filter
   })
 
-  const getStatusColor = (phase: string) => {
+  // Count tasks requiring action
+  const actionRequiredCount = tasks.filter(t => t.actionRequired).length
+
+  const getStatusColor = (phase: string, actionRequired?: boolean) => {
+    if (actionRequired) return 'bg-red-100 text-red-800 animate-pulse'
     switch (phase) {
       case 'completed': return 'bg-green-100 text-green-800'
       case 'executing': return 'bg-blue-100 text-blue-800'
       case 'planning': return 'bg-purple-100 text-purple-800'
       case 'awaiting_approval': return 'bg-yellow-100 text-yellow-800'
       case 'failed': return 'bg-red-100 text-red-800'
+      case 'stopped': return 'bg-orange-100 text-orange-800'
+      case 'rejected': return 'bg-gray-100 text-gray-800'
       default: return 'bg-gray-100 text-gray-800'
     }
   }
 
-  const getStatusLabel = (phase: string) => {
+  const getStatusLabel = (phase: string, actionRequired?: boolean) => {
+    if (actionRequired) return '⚠️ Handlung noetig'
     switch (phase) {
       case 'awaiting_approval': return 'Warte auf OK'
       case 'planning': return 'Plant...'
-      case 'executing': return 'Führt aus...'
+      case 'executing': return 'Fuehrt aus...'
       case 'completed': return 'Fertig'
       case 'failed': return 'Fehler'
+      case 'stopped': return 'Gestoppt'
+      case 'rejected': return 'Abgelehnt'
       default: return phase
     }
   }
@@ -265,6 +449,12 @@ export default function Dashboard() {
     }
   }
 
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
   if (loading) return (
     <div className="flex justify-center items-center min-h-screen">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -273,6 +463,19 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Navigation */}
+      <nav className="bg-white shadow-sm border-b">
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+          <Link href="/" className="text-xl font-bold text-gray-900">Universal AI Agent</Link>
+          <div className="flex gap-2">
+            <Link href="/chat" className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+              Chat
+            </Link>
+            <span className="px-4 py-2 bg-blue-500 text-white rounded-lg">Dashboard</span>
+          </div>
+        </div>
+      </nav>
+
       <div className="container mx-auto p-6">
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -288,7 +491,7 @@ export default function Dashboard() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
           <div className="bg-white p-4 rounded-lg shadow">
             <div className="text-2xl font-bold text-gray-600">{stats.total}</div>
             <div className="text-gray-500 text-sm">Total</div>
@@ -313,19 +516,29 @@ export default function Dashboard() {
             <div className="text-2xl font-bold text-red-600">{stats.failed || 0}</div>
             <div className="text-gray-500 text-sm">Failed</div>
           </div>
+          <div className="bg-white p-4 rounded-lg shadow">
+            <div className="text-2xl font-bold text-orange-600">{stats.stopped || 0}</div>
+            <div className="text-gray-500 text-sm">Stopped</div>
+          </div>
+          <div className="bg-white p-4 rounded-lg shadow">
+            <div className="text-2xl font-bold text-gray-600">{stats.rejected || 0}</div>
+            <div className="text-gray-500 text-sm">Rejected</div>
+          </div>
         </div>
 
         {/* Filters */}
         <div className="mb-6 flex flex-wrap gap-2">
-          {['all', 'awaiting_approval', 'planning', 'executing', 'completed', 'failed'].map(status => (
+          {['all', 'awaiting_approval', 'action_required', 'planning', 'executing', 'completed', 'failed', 'stopped', 'rejected'].map(status => (
             <button
               key={status}
               onClick={() => setFilter(status)}
               className={`px-4 py-2 rounded-lg ${
                 filter === status ? 'bg-blue-500 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'
-              }`}
+              } ${status === 'action_required' && actionRequiredCount > 0 ? 'ring-2 ring-red-400' : ''}`}
             >
-              {status === 'all' ? 'Alle' : getStatusLabel(status)}
+              {status === 'all' ? 'Alle' :
+               status === 'action_required' ? `⚠️ Handlung (${actionRequiredCount})` :
+               getStatusLabel(status)}
             </button>
           ))}
         </div>
@@ -336,17 +549,20 @@ export default function Dashboard() {
             <div
               key={task.id}
               className={`bg-white p-4 rounded-lg shadow hover:shadow-md cursor-pointer border-l-4 ${
+                task.actionRequired ? 'border-red-500 bg-red-50' :
                 task.status.phase === 'awaiting_approval' ? 'border-yellow-500' :
                 task.status.phase === 'planning' ? 'border-purple-500' :
                 task.status.phase === 'executing' ? 'border-blue-500' :
-                task.status.phase === 'completed' ? 'border-green-500' : 'border-red-500'
+                task.status.phase === 'completed' ? 'border-green-500' :
+                task.status.phase === 'stopped' ? 'border-orange-500' :
+                task.status.phase === 'rejected' ? 'border-gray-500' : 'border-red-500'
               }`}
               onClick={() => setSelectedTask(task)}
             >
               <div className="flex justify-between items-start mb-2">
                 <h3 className="font-semibold truncate flex-1 mr-2">{task.goal}</h3>
-                <span className={`px-2 py-1 rounded-full text-xs whitespace-nowrap ${getStatusColor(task.status.phase)}`}>
-                  {getStatusLabel(task.status.phase)}
+                <span className={`px-2 py-1 rounded-full text-xs whitespace-nowrap ${getStatusColor(task.status.phase, task.actionRequired)}`}>
+                  {getStatusLabel(task.status.phase, task.actionRequired)}
                 </span>
               </div>
               <p className="text-sm text-gray-600 mb-2">
@@ -354,7 +570,40 @@ export default function Dashboard() {
               </p>
               {task.status.phase === 'awaiting_approval' && (
                 <div className="text-sm text-yellow-600 font-medium">
-                  ⚠️ Plan wartet auf Bestätigung
+                  Plan wartet auf Bestaetigung
+                  {task.estimatedCost !== undefined && task.estimatedCost > 0 && (
+                    <span className="ml-2 text-gray-500">(~${task.estimatedCost.toFixed(2)})</span>
+                  )}
+                </div>
+              )}
+              {/* Progress Bar for Executing Tasks */}
+              {task.status.phase === 'executing' && (
+                <div className="mt-2">
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>{task.progress || 0}%</span>
+                    <span>Schritt {task.currentStep || 0}/{task.estimatedSteps || '?'}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-1.5">
+                    <div
+                      className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                      style={{ width: `${task.progress || 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {task.actionRequired && (
+                <div className={`mt-2 p-2 rounded text-sm ${
+                  task.actionBlocking
+                    ? 'bg-red-100 text-red-800 border border-red-300'
+                    : 'bg-orange-100 text-orange-800 border border-orange-300'
+                }`}>
+                  <div className="flex items-center gap-1">
+                    <span>{task.actionBlocking ? '🛑' : '⚠️'}</span>
+                    <span className="font-medium">
+                      {task.actionBlocking ? 'Wartet - Handlung noetig' : 'Handlung noetig'}
+                    </span>
+                  </div>
+                  <div className="text-xs mt-1 opacity-80">{task.actionType}</div>
                 </div>
               )}
             </div>
@@ -370,15 +619,24 @@ export default function Dashboard() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
               {/* Header */}
-              <div className="flex justify-between items-start p-4 border-b">
-                <div>
-                  <h2 className="text-xl font-bold">{selectedTask.goal}</h2>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase)}`}>
-                      {getStatusLabel(selectedTask.status.phase)}
+              <div className="flex justify-between items-start p-4 border-b flex-shrink-0">
+                <div className="flex-1 min-w-0 mr-4">
+                  <h2 className="text-lg font-bold line-clamp-2 overflow-hidden" title={selectedTask.goal}>{selectedTask.goal}</h2>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase, selectedTask.actionRequired)}`}>
+                      {getStatusLabel(selectedTask.status.phase, selectedTask.actionRequired)}
                     </span>
                     {(selectedTask.status.phase === 'executing' || selectedTask.status.phase === 'planning') && (
-                      <span className="text-blue-500 animate-pulse text-sm">● Läuft...</span>
+                      <span className="text-blue-500 animate-pulse text-sm">Laeuft...</span>
+                    )}
+                    {selectedTask.actionRequired && (
+                      <span className={`inline-block px-2 py-1 rounded text-xs ${
+                        selectedTask.actionBlocking
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-orange-100 text-orange-800'
+                      }`}>
+                        {selectedTask.actionBlocking ? '🛑 Wartet' : '⚠️ Handlung noetig'}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -389,12 +647,12 @@ export default function Dashboard() {
               {selectedTask.status.phase === 'awaiting_approval' && (
                 <div className="bg-yellow-50 border-b border-yellow-200 p-4 flex items-center justify-between">
                   <div>
-                    <span className="text-yellow-800 font-medium">⚠️ Plan erstellt - Bitte prüfen und bestätigen</span>
-                    <p className="text-yellow-700 text-sm">Lies dir den Plan durch und klicke auf Genehmigen um die Ausführung zu starten.</p>
+                    <span className="text-yellow-800 font-medium">Plan erstellt - Bitte pruefen und bestaetigen</span>
+                    <p className="text-yellow-700 text-sm">Lies dir den Plan durch und klicke auf Genehmigen um die Ausfuehrung zu starten.</p>
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={rejectTask}
+                      onClick={() => setShowRejectModal(true)}
                       className="px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200"
                     >
                       Ablehnen
@@ -404,7 +662,137 @@ export default function Dashboard() {
                       disabled={approving}
                       className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
                     >
-                      {approving ? 'Startet...' : '✓ Genehmigen & Ausführen'}
+                      {approving ? 'Startet...' : 'Genehmigen & Ausfuehren'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Stop Banner for running tasks */}
+              {(selectedTask.status.phase === 'executing' || selectedTask.status.phase === 'planning') && (
+                <div className="bg-blue-50 border-b border-blue-200 p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                    <span className="text-blue-800 font-medium">Task wird ausgefuehrt...</span>
+                  </div>
+                  <button
+                    onClick={stopTask}
+                    disabled={stopping}
+                    className="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:opacity-50"
+                  >
+                    {stopping ? 'Stoppe...' : 'Abbrechen'}
+                  </button>
+                </div>
+              )}
+
+              {/* Error/Stopped/Rejected Banner with details */}
+              {['failed', 'stopped', 'rejected'].includes(selectedTask.status.phase) && (
+                <div className={`border-b p-4 ${
+                  selectedTask.status.phase === 'failed' ? 'bg-red-50 border-red-200' :
+                  selectedTask.status.phase === 'stopped' ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'
+                }`}>
+                  <div className="flex items-start gap-3 mb-4">
+                    <span className="text-2xl">
+                      {selectedTask.status.phase === 'failed' ? '❌' :
+                       selectedTask.status.phase === 'stopped' ? '⏹️' : '🚫'}
+                    </span>
+                    <div className="flex-1">
+                      <div className={`font-bold text-lg ${
+                        selectedTask.status.phase === 'failed' ? 'text-red-800' :
+                        selectedTask.status.phase === 'stopped' ? 'text-orange-800' : 'text-gray-800'
+                      }`}>
+                        {selectedTask.status.phase === 'failed' ? 'Task fehlgeschlagen' :
+                         selectedTask.status.phase === 'stopped' ? 'Task wurde gestoppt' : 'Plan wurde abgelehnt'}
+                      </div>
+
+                      {/* Error details for failed tasks */}
+                      {selectedTask.status.phase === 'failed' && selectedTask.errorReason && (
+                        <div className="mt-3 space-y-2">
+                          <div className="p-3 bg-red-100 rounded border border-red-300">
+                            <div className="text-sm font-medium text-red-800 mb-1">Fehlergrund:</div>
+                            <div className="text-red-700">{selectedTask.errorReason}</div>
+                          </div>
+
+                          {selectedTask.errorStep && (
+                            <div className="text-sm text-red-700">
+                              <strong>Fehlgeschlagen bei:</strong> {selectedTask.errorStep}
+                            </div>
+                          )}
+
+                          {selectedTask.errorRecommendation && (
+                            <div className="p-3 bg-yellow-50 rounded border border-yellow-300">
+                              <div className="text-sm font-medium text-yellow-800 mb-1">Empfehlung:</div>
+                              <div className="text-yellow-700">{selectedTask.errorRecommendation}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      onClick={() => deleteTask(selectedTask.id)}
+                      className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                    >
+                      Abbrechen & Loeschen
+                    </button>
+                    <button
+                      onClick={retryTask}
+                      disabled={retrying}
+                      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+                    >
+                      {retrying ? 'Startet neu...' : 'Komplett neu starten'}
+                    </button>
+                    {selectedTask.status.phase === 'failed' && selectedTask.errorRecommendation && (
+                      <button
+                        onClick={() => {
+                          setAdjustmentInput(selectedTask.errorRecommendation || '')
+                          setShowContinueModal(true)
+                        }}
+                        className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                      >
+                        Mit Anpassung fortfahren
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Required Banner */}
+              {selectedTask.actionRequired && (
+                <div className={`border-b p-4 ${
+                  selectedTask.actionBlocking
+                    ? 'bg-red-50 border-red-200'
+                    : 'bg-orange-50 border-orange-200'
+                }`}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{selectedTask.actionBlocking ? '🛑' : '⚠️'}</span>
+                      <div>
+                        <div className={`font-bold ${selectedTask.actionBlocking ? 'text-red-800' : 'text-orange-800'}`}>
+                          {selectedTask.actionBlocking
+                            ? 'Task wartet - Eingabe erforderlich'
+                            : 'Handlung erforderlich (Task laeuft weiter)'}
+                        </div>
+                        <div className={`text-sm mt-1 ${selectedTask.actionBlocking ? 'text-red-700' : 'text-orange-700'}`}>
+                          <strong>Typ:</strong> {selectedTask.actionType}
+                        </div>
+                        <div className={`text-sm mt-1 ${selectedTask.actionBlocking ? 'text-red-700' : 'text-orange-700'}`}>
+                          {selectedTask.actionMessage}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowActionModal(true)}
+                      className={`px-4 py-2 text-white rounded ${
+                        selectedTask.actionBlocking
+                          ? 'bg-red-500 hover:bg-red-600'
+                          : 'bg-orange-500 hover:bg-orange-600'
+                      }`}
+                    >
+                      Eingabe liefern
                     </button>
                   </div>
                 </div>
@@ -416,46 +804,133 @@ export default function Dashboard() {
                   onClick={() => setActiveTab('plan')}
                   className={`px-4 py-2 ${activeTab === 'plan' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
                 >
-                  📋 Plan
+                  Plan
                 </button>
                 <button
                   onClick={() => setActiveTab('steps')}
                   className={`px-4 py-2 ${activeTab === 'steps' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
                 >
-                  🔧 Steps ({steps.length})
+                  Steps ({steps.length})
                 </button>
                 <button
                   onClick={() => setActiveTab('output')}
                   className={`px-4 py-2 ${activeTab === 'output' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
                 >
-                  📄 Output
+                  Output
+                </button>
+                <button
+                  onClick={() => setActiveTab('files')}
+                  className={`px-4 py-2 ${activeTab === 'files' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
+                >
+                  Dateien ({files.length})
                 </button>
                 <button
                   onClick={() => setActiveTab('chat')}
                   className={`px-4 py-2 ${activeTab === 'chat' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-600'}`}
                 >
-                  💬 Chat ({messages.length})
+                  Chat ({messages.length})
                 </button>
               </div>
 
               {/* Content Area */}
               <div className="flex-1 overflow-y-auto p-4">
                 {/* Task Info */}
-                <div className="mb-4 p-3 bg-gray-50 rounded text-sm grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <div><strong>ID:</strong> {selectedTask.id.slice(0, 8)}...</div>
-                  <div><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</div>
-                  {selectedTask.totalDuration && <div><strong>Dauer:</strong> {(selectedTask.totalDuration / 1000).toFixed(1)}s</div>}
-                  {selectedTask.totalCost && <div><strong>Kosten:</strong> ${selectedTask.totalCost.toFixed(4)}</div>}
+                <div className="mb-4 p-3 bg-gray-50 rounded text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                    <div><strong>ID:</strong> {selectedTask.id.slice(0, 8)}...</div>
+                    <div><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</div>
+                    {selectedTask.totalDuration && <div><strong>Dauer:</strong> {(selectedTask.totalDuration / 1000).toFixed(1)}s</div>}
+                    {selectedTask.totalCost !== undefined && (
+                      <div>
+                        <strong>Kosten:</strong> ${selectedTask.totalCost.toFixed(4)}
+                        {selectedTask.estimatedCost !== undefined && selectedTask.estimatedCost > 0 && (
+                          <span className="text-gray-500 ml-1">(~${selectedTask.estimatedCost.toFixed(2)} gesch.)</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Progress Bar for Executing Tasks */}
+                  {selectedTask.status.phase === 'executing' && (
+                    <div className="mt-3">
+                      <div className="flex justify-between text-xs text-gray-600 mb-1">
+                        <span>Fortschritt: {selectedTask.progress || 0}%</span>
+                        <span>Schritt {selectedTask.currentStep || 0} / {selectedTask.estimatedSteps || '?'}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${selectedTask.progress || 0}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cost Estimate Info for Awaiting Approval */}
+                  {selectedTask.status.phase === 'awaiting_approval' && selectedTask.estimatedCost !== undefined && selectedTask.estimatedCost > 0 && (
+                    <div className="mt-3 p-2 bg-blue-50 rounded border border-blue-200">
+                      <div className="flex items-center gap-2 text-blue-800">
+                        <span className="text-lg">💵</span>
+                        <div>
+                          <strong>Geschaetzte Ausfuehrungskosten:</strong> ${selectedTask.estimatedCost.toFixed(2)}
+                          <span className="text-gray-600 ml-2">({selectedTask.estimatedSteps || '?'} Schritte)</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Plan Tab */}
                 {activeTab === 'plan' && (
                   <div>
                     {selectedTask.plan ? (
-                      <div className="prose prose-sm max-w-none">
-                        <div className="p-4 bg-white border rounded-lg whitespace-pre-wrap font-mono text-sm">
-                          {selectedTask.plan}
-                        </div>
+                      <div>
+                        {selectedTask.status.phase === 'awaiting_approval' && !editingPlan && (
+                          <div className="mb-2 flex justify-end">
+                            <button
+                              onClick={() => { setEditedPlan(selectedTask.plan || ''); setEditingPlan(true); }}
+                              className="px-3 py-1 text-sm bg-gray-200 rounded hover:bg-gray-300"
+                            >
+                              Plan bearbeiten
+                            </button>
+                          </div>
+                        )}
+                        {editingPlan ? (
+                          <div>
+                            <textarea
+                              value={editedPlan}
+                              onChange={(e) => setEditedPlan(e.target.value)}
+                              className="w-full h-96 p-4 border rounded font-mono text-sm"
+                            />
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                onClick={savePlan}
+                                disabled={savingPlan}
+                                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
+                              >
+                                {savingPlan ? (
+                                  <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                    KI analysiert...
+                                  </>
+                                ) : (
+                                  'Speichern & Pruefen'
+                                )}
+                              </button>
+                              <button
+                                onClick={() => setEditingPlan(false)}
+                                disabled={savingPlan}
+                                className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-50"
+                              >
+                                Abbrechen
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="p-4 bg-white border rounded-lg whitespace-pre-wrap font-mono text-sm">
+                            {selectedTask.plan}
+                          </div>
+                        )}
                       </div>
                     ) : selectedTask.status.phase === 'planning' ? (
                       <div className="text-center text-gray-500 py-8">
@@ -481,7 +956,7 @@ export default function Dashboard() {
                             <span>Agent arbeitet...</span>
                           </div>
                         ) : selectedTask.status.phase === 'awaiting_approval' ? (
-                          'Genehmige den Plan um die Ausführung zu starten'
+                          'Genehmige den Plan um die Ausfuehrung zu starten'
                         ) : (
                           'Keine Steps vorhanden'
                         )}
@@ -516,7 +991,7 @@ export default function Dashboard() {
                     {selectedTask.status.phase === 'executing' && steps.length > 0 && (
                       <div className="flex items-center justify-center gap-2 text-blue-500 py-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                        <span className="text-sm">Weitere Steps werden ausgeführt...</span>
+                        <span className="text-sm">Weitere Steps werden ausgefuehrt...</span>
                       </div>
                     )}
                   </div>
@@ -537,12 +1012,49 @@ export default function Dashboard() {
                   </div>
                 )}
 
+                {/* Files Tab */}
+                {activeTab === 'files' && (
+                  <div>
+                    {files.length === 0 ? (
+                      <div className="text-center text-gray-500 py-8">Keine Dateien erstellt</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {files.map((file, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-3 bg-gray-50 rounded hover:bg-gray-100"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-xl">{file.isDirectory ? '📁' : '📄'}</span>
+                              <div>
+                                <div className="font-medium">{file.name}</div>
+                                <div className="text-xs text-gray-500">{file.path}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <span className="text-sm text-gray-500">{formatFileSize(file.size)}</span>
+                              {!file.isDirectory && (
+                                <button
+                                  onClick={() => downloadFile(file.path)}
+                                  className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                                >
+                                  Download
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Chat Tab */}
                 {activeTab === 'chat' && (
-                  <div>
-                    {messages.length > 0 && (
-                      <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
-                        {messages.map(msg => (
+                  <div className="flex flex-col h-full min-h-[300px]">
+                    <div className="flex-1 overflow-y-auto mb-4 space-y-3 pr-2" style={{ maxHeight: 'calc(100vh - 450px)' }}>
+                      {messages.length > 0 ? (
+                        messages.map(msg => (
                           <div
                             key={msg.id}
                             className={`p-3 rounded ${msg.role === 'user' ? 'bg-gray-100 ml-8' : 'bg-green-50 mr-8'}`}
@@ -550,12 +1062,14 @@ export default function Dashboard() {
                             <div className="text-xs text-gray-500 mb-1">
                               {msg.role === 'user' ? 'Du' : 'AI'} - {new Date(msg.createdAt).toLocaleTimeString()}
                             </div>
-                            <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                            <div className="whitespace-pre-wrap text-sm break-words">{msg.content}</div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex gap-2">
+                        ))
+                      ) : (
+                        <div className="text-gray-400 text-center py-8">Keine Nachrichten</div>
+                      )}
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
                       <input
                         type="text"
                         value={newMessage}
@@ -583,14 +1097,246 @@ export default function Dashboard() {
                   onClick={() => deleteTask(selectedTask.id)}
                   className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
                 >
-                  Löschen
+                  Loeschen
                 </button>
                 <button
                   onClick={() => setSelectedTask(null)}
                   className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
                 >
-                  Schließen
+                  Schliessen
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Reject Modal */}
+        {showRejectModal && selectedTask && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
+            <div className="bg-white rounded-lg w-full max-w-md p-6">
+              <h3 className="text-lg font-bold mb-4">Plan ablehnen</h3>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Feedback (optional)
+                </label>
+                <textarea
+                  value={rejectFeedback}
+                  onChange={(e) => setRejectFeedback(e.target.value)}
+                  placeholder="Was soll anders sein? z.B. 'Nutze React statt Vue'"
+                  className="w-full h-24 p-3 border rounded"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setShowRejectModal(false); setRejectFeedback(''); }}
+                  className="flex-1 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={() => rejectTask(false)}
+                  className="flex-1 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                >
+                  Ablehnen
+                </button>
+                {rejectFeedback.trim() && (
+                  <button
+                    onClick={() => rejectTask(true)}
+                    className="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                  >
+                    Neuer Plan
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* AI Review Modal */}
+        {showReviewModal && aiReview && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+              <div className={`p-4 rounded-t-lg flex items-center justify-between ${
+                aiReview.status === 'APPROVED' ? 'bg-green-500' : 'bg-yellow-500'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{aiReview.status === 'APPROVED' ? '✅' : '⚠️'}</span>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">
+                      {aiReview.status === 'APPROVED' ? 'Plan genehmigt' : 'Ueberarbeitung empfohlen'}
+                    </h3>
+                    <p className="text-white text-sm opacity-90">
+                      {aiReview.status === 'APPROVED'
+                        ? 'Die KI hat deinen bearbeiteten Plan analysiert und fuer gut befunden.'
+                        : 'Die KI hat moegliche Probleme in deinem Plan gefunden.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className="text-white text-2xl hover:opacity-70"
+                >
+                  &times;
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="prose prose-sm max-w-none whitespace-pre-wrap">
+                  {aiReview.feedback}
+                </div>
+              </div>
+              <div className="p-4 border-t flex gap-2">
+                {aiReview.status !== 'APPROVED' && (
+                  <button
+                    onClick={() => {
+                      setShowReviewModal(false)
+                      setEditingPlan(true)
+                      setEditedPlan(selectedTask?.plan || '')
+                    }}
+                    className="flex-1 px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600"
+                  >
+                    Plan nochmal bearbeiten
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className={`flex-1 px-4 py-2 rounded ${
+                    aiReview.status === 'APPROVED'
+                      ? 'bg-green-500 text-white hover:bg-green-600'
+                      : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                  }`}
+                >
+                  {aiReview.status === 'APPROVED' ? 'Verstanden' : 'Trotzdem fortfahren'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Action Input Modal */}
+        {showActionModal && selectedTask && selectedTask.actionRequired && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-lg w-full max-w-lg">
+              <div className={`p-4 rounded-t-lg ${
+                selectedTask.actionBlocking ? 'bg-red-500' : 'bg-orange-500'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-white">
+                    <span className="text-xl">{selectedTask.actionBlocking ? '🛑' : '⚠️'}</span>
+                    <h3 className="font-bold">Eingabe erforderlich</h3>
+                  </div>
+                  <button
+                    onClick={() => { setShowActionModal(false); setActionInput(''); }}
+                    className="text-white text-2xl hover:opacity-70"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+              <div className="p-4">
+                <div className="mb-4 p-3 bg-gray-50 rounded">
+                  <div className="text-sm text-gray-500 mb-1">
+                    <strong>Typ:</strong> {selectedTask.actionType}
+                  </div>
+                  <div className="text-gray-700">
+                    {selectedTask.actionMessage}
+                  </div>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Deine Eingabe
+                  </label>
+                  <textarea
+                    value={actionInput}
+                    onChange={(e) => setActionInput(e.target.value)}
+                    placeholder="z.B. API Key, Account-Daten, Entscheidung..."
+                    className="w-full h-32 p-3 border rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setShowActionModal(false); setActionInput(''); }}
+                    disabled={submittingAction}
+                    className="flex-1 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-50"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    onClick={submitActionInput}
+                    disabled={submittingAction || !actionInput.trim()}
+                    className={`flex-1 px-4 py-2 text-white rounded disabled:opacity-50 ${
+                      selectedTask.actionBlocking
+                        ? 'bg-red-500 hover:bg-red-600'
+                        : 'bg-orange-500 hover:bg-orange-600'
+                    }`}
+                  >
+                    {submittingAction ? 'Wird gesendet...' : 'Absenden'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Continue with Adjustment Modal */}
+        {showContinueModal && selectedTask && selectedTask.status.phase === 'failed' && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[70]">
+            <div className="bg-white rounded-lg w-full max-w-2xl">
+              <div className="p-4 rounded-t-lg bg-green-500">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-white">
+                    <span className="text-xl">🔧</span>
+                    <h3 className="font-bold">Mit Anpassung fortfahren</h3>
+                  </div>
+                  <button
+                    onClick={() => { setShowContinueModal(false); setAdjustmentInput(''); }}
+                    className="text-white text-2xl hover:opacity-70"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+              <div className="p-4">
+                {/* Error context */}
+                <div className="mb-4 p-3 bg-red-50 rounded border border-red-200">
+                  <div className="text-sm font-medium text-red-800 mb-1">Urspruenglicher Fehler:</div>
+                  <div className="text-red-700 text-sm">{selectedTask.errorReason}</div>
+                  {selectedTask.errorStep && (
+                    <div className="text-red-600 text-xs mt-1">Bei: {selectedTask.errorStep}</div>
+                  )}
+                </div>
+
+                {/* Adjustment input */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Deine Anpassung / Korrektur
+                  </label>
+                  <textarea
+                    value={adjustmentInput}
+                    onChange={(e) => setAdjustmentInput(e.target.value)}
+                    placeholder="Beschreibe was anders gemacht werden soll, z.B. andere Technologie, anderer Ansatz, fehlende API Keys..."
+                    className="w-full h-40 p-3 border rounded focus:ring-2 focus:ring-green-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Die KI wird mit dieser Anpassung fortfahren und versuchen den Fehler zu beheben.
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setShowContinueModal(false); setAdjustmentInput(''); }}
+                    disabled={continuing}
+                    className="flex-1 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 disabled:opacity-50"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    onClick={continueWithAdjustment}
+                    disabled={continuing || !adjustmentInput.trim()}
+                    className="flex-1 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
+                  >
+                    {continuing ? 'Wird fortgesetzt...' : 'Fortfahren'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
