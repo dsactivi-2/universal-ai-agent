@@ -610,9 +610,9 @@ export default function Dashboard() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
               {/* Header */}
-              <div className="flex justify-between items-start p-4 border-b">
-                <div>
-                  <h2 className="text-xl font-bold">{selectedTask.goal}</h2>
+              <div className="flex justify-between items-start p-4 border-b flex-shrink-0">
+                <div className="flex-1 min-w-0 mr-4">
+                  <h2 className="text-lg font-bold line-clamp-2 overflow-hidden" title={selectedTask.goal}>{selectedTask.goal}</h2>
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase)}`}>
                       {getStatusLabel(selectedTask.status.phase)}
@@ -1042,10 +1042,10 @@ export default function Dashboard() {
 
                 {/* Chat Tab */}
                 {activeTab === 'chat' && (
-                  <div>
-                    {messages.length > 0 && (
-                      <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
-                        {messages.map(msg => (
+                  <div className="flex flex-col h-full min-h-[300px]">
+                    <div className="flex-1 overflow-y-auto mb-4 space-y-3 pr-2" style={{ maxHeight: 'calc(100vh - 450px)' }}>
+                      {messages.length > 0 ? (
+                        messages.map(msg => (
                           <div
                             key={msg.id}
                             className={`p-3 rounded ${msg.role === 'user' ? 'bg-gray-100 ml-8' : 'bg-green-50 mr-8'}`}
@@ -1053,12 +1053,14 @@ export default function Dashboard() {
                             <div className="text-xs text-gray-500 mb-1">
                               {msg.role === 'user' ? 'Du' : 'AI'} - {new Date(msg.createdAt).toLocaleTimeString()}
                             </div>
-                            <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                            <div className="whitespace-pre-wrap text-sm break-words">{msg.content}</div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex gap-2">
+                        ))
+                      ) : (
+                        <div className="text-gray-400 text-center py-8">Keine Nachrichten</div>
+                      )}
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
                       <input
                         type="text"
                         value={newMessage}
