@@ -329,6 +329,57 @@ export function getRecentLogs(type: 'app' | 'error' = 'app', lines: number = 100
   }
 }
 
+// Security logging helper
+export function logSecurity(
+  event: string,
+  details: Record<string, unknown>,
+  level: 'info' | 'warn' | 'error' = 'info'
+): void {
+  const securityLogger = new Logger('security')
+  const meta = { type: 'security_event', event, ...details }
+
+  if (level === 'error') {
+    securityLogger.error(`Security: ${event}`, undefined, meta)
+  } else if (level === 'warn') {
+    securityLogger.warn(`Security: ${event}`, meta)
+  } else {
+    securityLogger.info(`Security: ${event}`, meta)
+  }
+}
+
+// Task logging helper
+export function logTask(taskId: string, message: string, meta?: Record<string, unknown>): void {
+  const taskLogger = new Logger('task', taskId)
+  taskLogger.info(message, meta)
+}
+
+// API error handler
+export function handleApiError(
+  error: unknown,
+  context: string | { path: string; method: string },
+  meta?: Record<string, unknown>
+): { message: string; status: number; error?: string } {
+  const errorLogger = new Logger('api')
+  const contextStr = typeof context === 'string' ? context : `${context.method} ${context.path}`
+  const contextMeta = typeof context === 'object' ? context : undefined
+
+  if (error instanceof Error) {
+    errorLogger.error(`${contextStr}: ${error.message}`, error, { ...contextMeta, ...meta })
+    return {
+      message: error.message,
+      error: error.message,
+      status: 500
+    }
+  }
+
+  errorLogger.error(`${contextStr}: Unknown error`, undefined, { error, ...contextMeta, ...meta })
+  return {
+    message: 'An unexpected error occurred',
+    error: 'An unexpected error occurred',
+    status: 500
+  }
+}
+
 // Get log stats
 export function getLogStats(): { appSize: number; errorSize: number; logDir: string } {
   try {

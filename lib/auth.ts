@@ -193,7 +193,7 @@ export function checkRateLimit(
   const key = `${identifier}:${Math.floor(now / config.windowMs)}`
 
   // Alte Entries aufräumen
-  for (const [k, v] of rateLimitStore.entries()) {
+  for (const [k, v] of Array.from(rateLimitStore.entries())) {
     if (v.resetAt < now) {
       rateLimitStore.delete(k)
     }
