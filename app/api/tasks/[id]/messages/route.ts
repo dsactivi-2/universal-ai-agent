@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getMessagesByTaskId, addMessage, getConversationHistory, getTaskById, updateTask } from '@/lib/database'
 import Anthropic from '@anthropic-ai/sdk'
+import { authAndLLMRateLimit, requireAuth } from '@/lib/auth'
+import { validateParams, validateBody, TaskIdParamSchema, SendMessageSchema } from '@/lib/validation'
+import { logger, logTask, handleApiError } from '@/lib/logger'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
@@ -12,13 +15,31 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const startTime = Date.now()
+
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
+    // Params validieren
     const { id } = await params
+    const paramResult = validateParams(TaskIdParamSchema, { id })
+    if (!paramResult.success) return paramResult.error
+
     const messages = getMessagesByTaskId(id)
+
+    logger.info('Messages fetched', {
+      userId: authResult.user.userId,
+      taskId: id,
+      count: messages.length,
+      duration: Date.now() - startTime
+    })
+
     return NextResponse.json(messages)
   } catch (error) {
-    console.error('Failed to fetch messages:', error)
-    return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500 })
+    const { message, status } = handleApiError(error, { path: '/api/tasks/[id]/messages', method: 'GET' })
+    return NextResponse.json({ error: message }, { status })
   }
 }
 
@@ -27,37 +48,49 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const startTime = Date.now()
+
   try {
+    // Auth + Rate Limit prüfen
+    const authResult = authAndLLMRateLimit(request)
+    if ('error' in authResult) return authResult.error
+
+    // Params validieren
     const { id: taskId } = await params
-    const { message } = await request.json()
+    const paramResult = validateParams(TaskIdParamSchema, { id: taskId })
+    if (!paramResult.success) return paramResult.error
 
-    if (!message || typeof message !== 'string') {
-      return NextResponse.json({ error: 'Message is required' }, { status: 400 })
-    }
+    // Body validieren
+    const body = await request.json()
+    const bodyResult = validateBody(SendMessageSchema, body)
+    if (!bodyResult.success) return bodyResult.error
 
-    // Check if task exists
+    const { message } = bodyResult.data
+
+    // Task prüfen
     const task = getTaskById(taskId)
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     }
 
-    // Check for API key
+    // API Key prüfen
     if (!process.env.ANTHROPIC_API_KEY) {
-      return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 500 })
+      logger.error('ANTHROPIC_API_KEY not configured', { taskId })
+      return NextResponse.json({ error: 'API configuration error' }, { status: 500 })
     }
 
-    // Save user message
+    // User-Nachricht speichern
     const userMessageId = uuidv4()
     addMessage(taskId, userMessageId, 'user', message)
 
-    // Get conversation history
+    // Konversationshistorie abrufen
     const history = getConversationHistory(taskId)
 
-    // If no history, add the original task as first message
+    // Messages für Claude vorbereiten
     const messages: Array<{ role: 'user' | 'assistant', content: string }> = []
 
     if (history.length === 1) {
-      // First follow-up: include original task context
+      // Erste Folgenachricht: Original-Kontext hinzufügen
       messages.push({
         role: 'user',
         content: `Ursprüngliche Aufgabe: ${task.goal}\n\nLetzte Antwort:\n${task.output || 'Keine Antwort'}`
@@ -68,11 +101,11 @@ export async function POST(
       })
     }
 
-    // Add conversation history
+    // Konversationshistorie hinzufügen
     messages.push(...history)
 
-    // Call Claude API
-    const startTime = Date.now()
+    // Claude API aufrufen
+    const llmStartTime = Date.now()
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 4096,
@@ -85,22 +118,39 @@ export async function POST(
       .map(block => (block as { type: 'text'; text: string }).text)
       .join('\n')
 
-    // Save assistant response
+    // Assistant-Antwort speichern
     const assistantMessageId = uuidv4()
     addMessage(taskId, assistantMessageId, 'assistant', outputText)
 
-    // Calculate cost
+    // Kosten berechnen (aktualisierte Preise)
     const inputTokens = response.usage?.input_tokens || 0
     const outputTokens = response.usage?.output_tokens || 0
-    const cost = (inputTokens * 0.003 + outputTokens * 0.015) / 1000
-    const duration = Date.now() - startTime
+    // Claude Sonnet 4: $3/$15 per million tokens
+    const cost = (inputTokens * 3 + outputTokens * 15) / 1000000
+    const duration = Date.now() - llmStartTime
 
-    // Update task with latest response
+    // Task aktualisieren
     updateTask(taskId, {
       output: outputText,
       summary: outputText.slice(0, 200) + (outputText.length > 200 ? '...' : ''),
       totalDuration: (task.totalDuration || 0) + duration,
       totalCost: (task.totalCost || 0) + cost
+    })
+
+    logTask(taskId, 'message_sent', {
+      userId: authResult.user.userId,
+      inputTokens,
+      outputTokens,
+      cost,
+      duration
+    })
+
+    logger.info('Message processed', {
+      userId: authResult.user.userId,
+      taskId,
+      inputTokens,
+      outputTokens,
+      duration: Date.now() - startTime
     })
 
     return NextResponse.json({
@@ -120,8 +170,7 @@ export async function POST(
       }
     })
   } catch (error) {
-    console.error('Failed to process message:', error)
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: errorMessage }, { status: 500 })
+    const { message, status } = handleApiError(error, { path: '/api/tasks/[id]/messages', method: 'POST' })
+    return NextResponse.json({ error: message }, { status })
   }
 }

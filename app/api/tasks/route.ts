@@ -1,38 +1,78 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
-import { getAllTasks, createTask, updateTask, getTaskStats, addStep } from '@/lib/database'
-import { Orchestrator, StepResult } from '@/lib/orchestrator'
+import { getAllTasks, createTask, updateTask, getTaskStats, deleteTask } from '@/lib/database'
+import { Orchestrator } from '@/lib/orchestrator'
+import { authAndLLMRateLimit, requireAuth } from '@/lib/auth'
+import { validateBody, validateQuery, CreateTaskSchema, UpdateTaskSchema, TaskQuerySchema, DeleteTaskQuerySchema } from '@/lib/validation'
+import { logger, logTask, handleApiError } from '@/lib/logger'
 
 const orchestrator = new Orchestrator()
 
 // GET - Alle Tasks abrufen
 export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const statsOnly = searchParams.get('stats')
+  const startTime = Date.now()
 
-    if (statsOnly === 'true') {
-      const stats = getTaskStats()
-      return NextResponse.json(stats)
+  try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
+    // Query Parameter validieren
+    const queryResult = validateQuery(TaskQuerySchema, new URL(request.url).searchParams)
+    if (!queryResult.success) return queryResult.error
+
+    const { stats, phase, limit, offset } = queryResult.data
+
+    if (stats === 'true') {
+      const taskStats = getTaskStats()
+      logger.info('Task stats fetched', { userId: authResult.user.userId, duration: Date.now() - startTime })
+      return NextResponse.json(taskStats)
     }
 
-    const tasks = getAllTasks()
-    return NextResponse.json(tasks)
+    let tasks = getAllTasks()
+
+    // Filter by phase if specified
+    if (phase) {
+      tasks = tasks.filter(t => t.status.phase === phase)
+    }
+
+    // Pagination
+    const paginatedTasks = tasks.slice(offset, offset + limit)
+
+    logger.info('Tasks fetched', {
+      userId: authResult.user.userId,
+      count: paginatedTasks.length,
+      total: tasks.length,
+      duration: Date.now() - startTime
+    })
+
+    return NextResponse.json({
+      tasks: paginatedTasks,
+      total: tasks.length,
+      limit,
+      offset
+    })
   } catch (error) {
-    console.error('Failed to fetch tasks:', error)
-    return NextResponse.json({ error: 'Failed to fetch tasks' }, { status: 500 })
+    const { message, status } = handleApiError(error, { path: '/api/tasks', method: 'GET' })
+    return NextResponse.json({ error: message }, { status })
   }
 }
 
 // POST - Neuen Task erstellen (startet mit Planning)
 export async function POST(request: NextRequest) {
+  const startTime = Date.now()
+
   try {
-    const { message } = await request.json()
+    // Auth + Rate Limit prüfen (LLM Rate Limit)
+    const authResult = authAndLLMRateLimit(request)
+    if ('error' in authResult) return authResult.error
 
-    if (!message || typeof message !== 'string') {
-      return NextResponse.json({ error: 'Message is required' }, { status: 400 })
-    }
+    // Body validieren
+    const body = await request.json()
+    const validationResult = validateBody(CreateTaskSchema, body)
+    if (!validationResult.success) return validationResult.error
 
+    const { message } = validationResult.data
     const taskId = uuidv4()
 
     // Task in DB speichern mit Phase "planning"
@@ -42,6 +82,8 @@ export async function POST(request: NextRequest) {
       phase: 'planning'
     })
 
+    logTask(taskId, 'created', { userId: authResult.user.userId, goal: message.slice(0, 100) })
+
     // Orchestrator im Planning-Modus starten (async)
     orchestrator.handleRequest({
       message,
@@ -49,7 +91,6 @@ export async function POST(request: NextRequest) {
       mode: 'plan'
     }).then(result => {
       if (result.success && result.plan) {
-        // Plan erstellt - warte auf Bestätigung
         updateTask(taskId, {
           phase: 'awaiting_approval',
           plan: result.plan,
@@ -58,19 +99,28 @@ export async function POST(request: NextRequest) {
           totalDuration: result.totalDuration,
           totalCost: result.totalCost
         })
+        logTask(taskId, 'plan_completed', { duration: result.totalDuration, cost: result.totalCost })
       } else {
-        // Planung fehlgeschlagen
         updateTask(taskId, {
           phase: 'failed',
           output: result.output,
           summary: result.summary
         })
+        logTask(taskId, 'plan_failed', { output: result.output?.slice(0, 200) })
       }
     }).catch(error => {
+      const errorMessage = error instanceof Error ? error.message : String(error)
       updateTask(taskId, {
         phase: 'failed',
-        output: error.message
+        output: errorMessage
       })
+      logger.error('Planning failed', { taskId }, error instanceof Error ? error : undefined)
+    })
+
+    logger.info('Task creation started', {
+      userId: authResult.user.userId,
+      taskId,
+      duration: Date.now() - startTime
     })
 
     return NextResponse.json({
@@ -79,43 +129,57 @@ export async function POST(request: NextRequest) {
       message: 'Task created - Planning started'
     })
   } catch (error) {
-    console.error('Failed to create task:', error)
-    return NextResponse.json({ error: 'Failed to create task' }, { status: 500 })
+    const { message, status } = handleApiError(error, { path: '/api/tasks', method: 'POST' })
+    return NextResponse.json({ error: message }, { status })
   }
 }
 
 // DELETE - Task löschen
 export async function DELETE(request: NextRequest) {
+  const startTime = Date.now()
+
   try {
-    const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
 
-    if (!id) {
-      return NextResponse.json({ error: 'Task ID is required' }, { status: 400 })
-    }
+    // Query Parameter validieren
+    const queryResult = validateQuery(DeleteTaskQuerySchema, new URL(request.url).searchParams)
+    if (!queryResult.success) return queryResult.error
 
-    const { deleteTask } = await import('@/lib/database')
+    const { id } = queryResult.data
+
     const deleted = deleteTask(id)
 
     if (!deleted) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     }
 
+    logTask(id, 'deleted', { userId: authResult.user.userId })
+    logger.info('Task deleted', { userId: authResult.user.userId, taskId: id, duration: Date.now() - startTime })
+
     return NextResponse.json({ success: true, message: 'Task deleted' })
   } catch (error) {
-    console.error('Failed to delete task:', error)
-    return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 })
+    const { message, status } = handleApiError(error, { path: '/api/tasks', method: 'DELETE' })
+    return NextResponse.json({ error: message }, { status })
   }
 }
 
 // PATCH - Task aktualisieren
 export async function PATCH(request: NextRequest) {
-  try {
-    const { id, phase, output, summary, plan } = await request.json()
+  const startTime = Date.now()
 
-    if (!id) {
-      return NextResponse.json({ error: 'Task ID is required' }, { status: 400 })
-    }
+  try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
+    // Body validieren
+    const body = await request.json()
+    const validationResult = validateBody(UpdateTaskSchema, body)
+    if (!validationResult.success) return validationResult.error
+
+    const { id, phase, output, summary, plan } = validationResult.data
 
     const updated = updateTask(id, { phase, output, summary, plan })
 
@@ -123,9 +187,12 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     }
 
+    logTask(id, 'updated', { userId: authResult.user.userId, phase })
+    logger.info('Task updated', { userId: authResult.user.userId, taskId: id, duration: Date.now() - startTime })
+
     return NextResponse.json(updated)
   } catch (error) {
-    console.error('Failed to update task:', error)
-    return NextResponse.json({ error: 'Failed to update task' }, { status: 500 })
+    const { message, status } = handleApiError(error, { path: '/api/tasks', method: 'PATCH' })
+    return NextResponse.json({ error: message }, { status })
   }
 }

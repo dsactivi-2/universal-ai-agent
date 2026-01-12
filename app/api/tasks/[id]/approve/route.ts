@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask, addStep } from '@/lib/database'
 import { Orchestrator, StepResult } from '@/lib/orchestrator'
+import { authAndLLMRateLimit } from '@/lib/auth'
+import { validateParams, TaskIdParamSchema } from '@/lib/validation'
+import { logger, logTask, logTool, handleApiError } from '@/lib/logger'
 
 const orchestrator = new Orchestrator()
 
@@ -9,16 +12,25 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const { id: taskId } = await params
+  const startTime = Date.now()
 
-    // Check if task exists
+  try {
+    // Auth + Rate Limit prüfen
+    const authResult = authAndLLMRateLimit(request)
+    if ('error' in authResult) return authResult.error
+
+    // Params validieren
+    const { id: taskId } = await params
+    const paramResult = validateParams(TaskIdParamSchema, { id: taskId })
+    if (!paramResult.success) return paramResult.error
+
+    // Task prüfen
     const task = getTaskById(taskId)
     if (!task) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     }
 
-    // Check if task is awaiting approval
+    // Phase prüfen
     if (task.status.phase !== 'awaiting_approval') {
       return NextResponse.json(
         { error: `Task is not awaiting approval. Current phase: ${task.status.phase}` },
@@ -26,13 +38,15 @@ export async function POST(
       )
     }
 
-    // Update status to executing
+    // Status auf executing setzen
     updateTask(taskId, {
       phase: 'executing',
       summary: 'Plan genehmigt - Ausführung gestartet'
     })
 
-    // Step callback to save steps to database
+    logTask(taskId, 'approved', { userId: authResult.user.userId })
+
+    // Step callback für DB-Speicherung
     const onStep = (step: StepResult) => {
       addStep(
         taskId,
@@ -43,9 +57,10 @@ export async function POST(
         step.success,
         step.duration
       )
+      logTool(taskId, step.tool, step.success, step.duration)
     }
 
-    // Start execution with the original goal + plan context
+    // Ausführung mit Original-Goal + Plan-Kontext starten
     const executionMessage = `${task.goal}
 
 Der folgende Plan wurde genehmigt. Bitte führe ihn aus:
@@ -65,11 +80,25 @@ ${task.plan}`
         totalDuration: (task.totalDuration || 0) + result.totalDuration,
         totalCost: (task.totalCost || 0) + result.totalCost
       })
+
+      logTask(taskId, result.success ? 'completed' : 'failed', {
+        duration: result.totalDuration,
+        cost: result.totalCost,
+        stepCount: result.stepResults.length
+      })
     }).catch(error => {
+      const errorMessage = error instanceof Error ? error.message : String(error)
       updateTask(taskId, {
         phase: 'failed',
-        output: error.message
+        output: errorMessage
       })
+      logger.error('Execution failed', { taskId }, error instanceof Error ? error : undefined)
+    })
+
+    logger.info('Task execution started', {
+      userId: authResult.user.userId,
+      taskId,
+      duration: Date.now() - startTime
     })
 
     return NextResponse.json({
@@ -78,7 +107,7 @@ ${task.plan}`
       taskId
     })
   } catch (error) {
-    console.error('Failed to approve task:', error)
-    return NextResponse.json({ error: 'Failed to approve task' }, { status: 500 })
+    const { message, status } = handleApiError(error, { path: '/api/tasks/[id]/approve', method: 'POST' })
+    return NextResponse.json({ error: message }, { status })
   }
 }

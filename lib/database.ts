@@ -4,7 +4,7 @@ import fs from 'fs'
 
 const dbPath = path.join(process.cwd(), 'data', 'tasks.db')
 
-// Ensure data directory exists
+// Ensure data directory exists (sync is OK here - runs once at startup)
 const dataDir = path.join(process.cwd(), 'data')
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true })
@@ -12,7 +12,10 @@ if (!fs.existsSync(dataDir)) {
 
 const db = new Database(dbPath)
 
-// Create tables
+// Enable WAL mode for better concurrent access
+db.pragma('journal_mode = WAL')
+
+// Create tables with proper indexes
 db.exec(`
   CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -36,6 +39,14 @@ try {
   // Column already exists
 }
 
+// Create indexes for common queries
+try {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_phase ON tasks(phase)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC)`)
+} catch {
+  // Indexes might already exist
+}
+
 // Messages table for task conversations
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
@@ -47,6 +58,12 @@ db.exec(`
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   )
 `)
+
+try {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_task_id ON messages(task_id)`)
+} catch {
+  // Index might already exist
+}
 
 // Steps table for tool executions
 db.exec(`
@@ -63,6 +80,14 @@ db.exec(`
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   )
 `)
+
+try {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_steps_task_id ON steps(task_id)`)
+} catch {
+  // Index might already exist
+}
+
+// ==================== TYPE DEFINITIONS ====================
 
 export interface Task {
   id: string
@@ -104,43 +129,45 @@ export interface CreateTaskInput {
   phase?: string
 }
 
+// ==================== TASK FUNCTIONS ====================
+
 // Get all tasks
 export function getAllTasks(): Task[] {
   const stmt = db.prepare('SELECT * FROM tasks ORDER BY created_at DESC')
-  const rows = stmt.all() as any[]
+  const rows = stmt.all() as Record<string, unknown>[]
 
   return rows.map(row => ({
-    id: row.id,
-    goal: row.goal,
-    status: { phase: row.phase },
-    plan: row.plan,
-    output: row.output,
-    summary: row.summary,
-    totalDuration: row.total_duration,
-    totalCost: row.total_cost,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
+    id: row.id as string,
+    goal: row.goal as string,
+    status: { phase: row.phase as string },
+    plan: row.plan as string | undefined,
+    output: row.output as string | undefined,
+    summary: row.summary as string | undefined,
+    totalDuration: row.total_duration as number | undefined,
+    totalCost: row.total_cost as number | undefined,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string
   }))
 }
 
 // Get task by ID
 export function getTaskById(id: string): Task | null {
   const stmt = db.prepare('SELECT * FROM tasks WHERE id = ?')
-  const row = stmt.get(id) as any
+  const row = stmt.get(id) as Record<string, unknown> | undefined
 
   if (!row) return null
 
   return {
-    id: row.id,
-    goal: row.goal,
-    status: { phase: row.phase },
-    plan: row.plan,
-    output: row.output,
-    summary: row.summary,
-    totalDuration: row.total_duration,
-    totalCost: row.total_cost,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
+    id: row.id as string,
+    goal: row.goal as string,
+    status: { phase: row.phase as string },
+    plan: row.plan as string | undefined,
+    output: row.output as string | undefined,
+    summary: row.summary as string | undefined,
+    totalDuration: row.total_duration as number | undefined,
+    totalCost: row.total_cost as number | undefined,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string
   }
 }
 
@@ -205,16 +232,23 @@ export function updateTask(id: string, updates: Partial<{
 
 // Delete task
 export function deleteTask(id: string): boolean {
-  // Delete messages and steps first
-  db.prepare('DELETE FROM messages WHERE task_id = ?').run(id)
-  db.prepare('DELETE FROM steps WHERE task_id = ?').run(id)
-  const stmt = db.prepare('DELETE FROM tasks WHERE id = ?')
-  const result = stmt.run(id)
-  return result.changes > 0
+  // Use transaction for atomic delete
+  const deleteMessages = db.prepare('DELETE FROM messages WHERE task_id = ?')
+  const deleteSteps = db.prepare('DELETE FROM steps WHERE task_id = ?')
+  const deleteTaskStmt = db.prepare('DELETE FROM tasks WHERE id = ?')
+
+  const transaction = db.transaction(() => {
+    deleteMessages.run(id)
+    deleteSteps.run(id)
+    const result = deleteTaskStmt.run(id)
+    return result.changes > 0
+  })
+
+  return transaction()
 }
 
 // Get task stats
-export function getTaskStats() {
+export function getTaskStats(): Record<string, number> {
   const stmt = db.prepare(`
     SELECT
       COUNT(*) as total,
@@ -225,7 +259,7 @@ export function getTaskStats() {
       SUM(CASE WHEN phase = 'failed' THEN 1 ELSE 0 END) as failed
     FROM tasks
   `)
-  return stmt.get()
+  return stmt.get() as Record<string, number>
 }
 
 // ==================== MESSAGE FUNCTIONS ====================
@@ -233,14 +267,14 @@ export function getTaskStats() {
 // Get messages for a task
 export function getMessagesByTaskId(taskId: string): Message[] {
   const stmt = db.prepare('SELECT * FROM messages WHERE task_id = ? ORDER BY created_at ASC')
-  const rows = stmt.all(taskId) as any[]
+  const rows = stmt.all(taskId) as Record<string, unknown>[]
 
   return rows.map(row => ({
-    id: row.id,
-    taskId: row.task_id,
-    role: row.role,
-    content: row.content,
-    createdAt: row.created_at
+    id: row.id as string,
+    taskId: row.task_id as string,
+    role: row.role as 'user' | 'assistant',
+    content: row.content as string,
+    createdAt: row.created_at as string
   }))
 }
 
@@ -310,18 +344,18 @@ export function addStep(
 // Get steps for a task
 export function getStepsByTaskId(taskId: string): Step[] {
   const stmt = db.prepare('SELECT * FROM steps WHERE task_id = ? ORDER BY step_number ASC')
-  const rows = stmt.all(taskId) as any[]
+  const rows = stmt.all(taskId) as Record<string, unknown>[]
 
   return rows.map(row => ({
-    id: row.id,
-    taskId: row.task_id,
-    stepNumber: row.step_number,
-    tool: row.tool,
-    input: row.input,
-    output: row.output,
+    id: row.id as number,
+    taskId: row.task_id as string,
+    stepNumber: row.step_number as number,
+    tool: row.tool as string,
+    input: row.input as string,
+    output: row.output as string,
     success: row.success === 1,
-    duration: row.duration,
-    createdAt: row.created_at
+    duration: row.duration as number,
+    createdAt: row.created_at as string
   }))
 }
 

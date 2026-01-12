@@ -209,7 +209,8 @@ Erstelle eine vollständige Analyse mit allen Empfehlungen, Alternativen und Imp
 
       const inputTokens = response.usage?.input_tokens || 0
       const outputTokens = response.usage?.output_tokens || 0
-      const cost = (inputTokens * 0.003 + outputTokens * 0.015) / 1000
+      // Claude Sonnet 4: $3 input / $15 output per million tokens
+      const cost = (inputTokens * 3 + outputTokens * 15) / 1000000
 
       return {
         taskId: request.taskId,
@@ -349,7 +350,8 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
         }
       }
 
-      const cost = (totalInputTokens * 0.003 + totalOutputTokens * 0.015) / 1000
+      // Claude Sonnet 4: $3 input / $15 output per million tokens
+      const cost = (totalInputTokens * 3 + totalOutputTokens * 15) / 1000000
 
       return {
         taskId: request.taskId,
