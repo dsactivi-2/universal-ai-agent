@@ -14,6 +14,7 @@ import {
   SearchFilesInput,
   TaskCompleteInput
 } from './tools'
+import { toolLogger } from './logger'
 
 const execAsync = promisify(exec)
 
@@ -24,6 +25,11 @@ const WORKSPACE_ROOT = process.env.AGENT_WORKSPACE || '/app/workspace'
 function securePath(inputPath: string): string {
   const resolved = path.resolve(WORKSPACE_ROOT, inputPath)
   if (!resolved.startsWith(WORKSPACE_ROOT)) {
+    toolLogger.error('Path traversal attempt blocked', new Error('Access denied'), {
+      inputPath,
+      resolvedPath: resolved,
+      workspace: WORKSPACE_ROOT
+    })
     throw new Error(`Access denied: Path outside workspace: ${inputPath}`)
   }
   return resolved
@@ -45,7 +51,11 @@ const BLOCKED_COMMANDS = [
 
 function isCommandSafe(command: string): boolean {
   const lowerCmd = command.toLowerCase()
-  return !BLOCKED_COMMANDS.some(blocked => lowerCmd.includes(blocked.toLowerCase()))
+  const isBlocked = BLOCKED_COMMANDS.some(blocked => lowerCmd.includes(blocked.toLowerCase()))
+  if (isBlocked) {
+    toolLogger.error('Dangerous command blocked', new Error('Security violation'), { command })
+  }
+  return !isBlocked
 }
 
 export interface ToolResult {
@@ -71,32 +81,58 @@ export class ToolExecutor {
 
   async execute(toolName: string, input: unknown): Promise<ToolResult> {
     await this.ensureWorkspace()
+    const startTime = Date.now()
 
     try {
+      toolLogger.debug(`Executing tool: ${toolName}`, { input: JSON.stringify(input).slice(0, 200) })
+
+      let result: ToolResult
+
       switch (toolName) {
         case 'read_file':
-          return await this.readFile(input as ReadFileInput)
+          result = await this.readFile(input as ReadFileInput)
+          break
         case 'write_file':
-          return await this.writeFile(input as WriteFileInput)
+          result = await this.writeFile(input as WriteFileInput)
+          break
         case 'list_files':
-          return await this.listFiles(input as ListFilesInput)
+          result = await this.listFiles(input as ListFilesInput)
+          break
         case 'execute_bash':
-          return await this.executeBash(input as ExecuteBashInput)
+          result = await this.executeBash(input as ExecuteBashInput)
+          break
         case 'git_command':
-          return await this.gitCommand(input as GitCommandInput)
+          result = await this.gitCommand(input as GitCommandInput)
+          break
         case 'create_directory':
-          return await this.createDirectory(input as CreateDirectoryInput)
+          result = await this.createDirectory(input as CreateDirectoryInput)
+          break
         case 'delete_file':
-          return await this.deleteFile(input as DeleteFileInput)
+          result = await this.deleteFile(input as DeleteFileInput)
+          break
         case 'search_files':
-          return await this.searchFiles(input as SearchFilesInput)
+          result = await this.searchFiles(input as SearchFilesInput)
+          break
         case 'task_complete':
-          return await this.taskComplete(input as TaskCompleteInput)
+          result = await this.taskComplete(input as TaskCompleteInput)
+          break
         default:
-          return { success: false, output: '', error: `Unknown tool: ${toolName}` }
+          toolLogger.warn(`Unknown tool requested: ${toolName}`)
+          result = { success: false, output: '', error: `Unknown tool: ${toolName}` }
       }
+
+      const duration = Date.now() - startTime
+      if (result.success) {
+        toolLogger.debug(`Tool ${toolName} completed`, { durationMs: duration })
+      } else {
+        toolLogger.warn(`Tool ${toolName} failed`, { durationMs: duration, error: result.error })
+      }
+
+      return result
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      const duration = Date.now() - startTime
+      toolLogger.error(`Tool ${toolName} threw exception`, error, { durationMs: duration })
       return { success: false, output: '', error: errorMessage }
     }
   }
@@ -112,6 +148,7 @@ export class ToolExecutor {
     const dir = path.dirname(filePath)
     await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(filePath, input.content, 'utf-8')
+    toolLogger.info('File written', { path: input.path, size: input.content.length })
     return { success: true, output: `File written: ${input.path}` }
   }
 
@@ -127,12 +164,15 @@ export class ToolExecutor {
 
   private async executeBash(input: ExecuteBashInput): Promise<ToolResult> {
     if (!isCommandSafe(input.command)) {
+      toolLogger.error('Bash command blocked', new Error('Security violation'), { command: input.command })
       return { success: false, output: '', error: 'Command blocked for security reasons' }
     }
 
     const cwd = input.working_dir
       ? securePath(input.working_dir)
       : this.workspaceRoot
+
+    toolLogger.info('Executing bash command', { command: input.command.slice(0, 100), cwd })
 
     try {
       const { stdout, stderr } = await execAsync(input.command, {
@@ -147,10 +187,17 @@ export class ToolExecutor {
       })
 
       const output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : '')
+      if (stderr) {
+        toolLogger.warn('Bash command produced stderr', { stderr: stderr.slice(0, 200) })
+      }
       return { success: true, output: output || '(no output)' }
     } catch (error: unknown) {
-      const execError = error as { stdout?: string; stderr?: string; message?: string }
+      const execError = error as { stdout?: string; stderr?: string; message?: string; code?: number }
       const output = (execError.stdout || '') + (execError.stderr || '')
+      toolLogger.error('Bash command failed', error, {
+        command: input.command.slice(0, 100),
+        exitCode: execError.code
+      })
       return {
         success: false,
         output: output || '',
@@ -177,9 +224,11 @@ export class ToolExecutor {
 
     if (stat.isDirectory()) {
       await fs.rm(filePath, { recursive: true })
+      toolLogger.info('Directory deleted', { path: input.path })
       return { success: true, output: `Directory deleted: ${input.path}` }
     } else {
       await fs.unlink(filePath)
+      toolLogger.info('File deleted', { path: input.path })
       return { success: true, output: `File deleted: ${input.path}` }
     }
   }
@@ -219,6 +268,7 @@ export class ToolExecutor {
   }
 
   private async taskComplete(input: TaskCompleteInput): Promise<ToolResult> {
+    toolLogger.info('Task completed by agent', { summary: input.summary.slice(0, 200) })
     return {
       success: true,
       output: `TASK_COMPLETE: ${input.summary}`,

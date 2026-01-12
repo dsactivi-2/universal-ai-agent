@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask, addStep } from '@/lib/database'
 import { Orchestrator, StepResult } from '@/lib/orchestrator'
+import { apiLogger, createLogger } from '@/lib/logger'
 
 const orchestrator = new Orchestrator()
 
@@ -9,22 +10,28 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const startTime = Date.now()
   try {
     const { id: taskId } = await params
+    const logger = createLogger('api.approve', taskId)
 
     // Check if task exists
     const task = getTaskById(taskId)
     if (!task) {
+      logger.warn('Task not found for approval')
       return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     }
 
     // Check if task is awaiting approval
     if (task.status.phase !== 'awaiting_approval') {
+      logger.warn('Task not awaiting approval', { currentPhase: task.status.phase })
       return NextResponse.json(
         { error: `Task is not awaiting approval. Current phase: ${task.status.phase}` },
         { status: 400 }
       )
     }
+
+    logger.info('Plan approved, starting execution')
 
     // Update status to executing
     updateTask(taskId, {
@@ -59,6 +66,7 @@ ${task.plan}`
       onStep
     }).then(result => {
       if (result.success) {
+        logger.info('Execution completed successfully')
         updateTask(taskId, {
           phase: 'completed',
           output: result.output,
@@ -68,6 +76,7 @@ ${task.plan}`
         })
       } else {
         // Save error details for failed tasks
+        logger.error('Execution failed', new Error(result.errorReason || 'Unknown'))
         updateTask(taskId, {
           phase: 'failed',
           output: result.output,
@@ -80,6 +89,7 @@ ${task.plan}`
         })
       }
     }).catch(error => {
+      logger.error('Execution threw exception', error)
       updateTask(taskId, {
         phase: 'failed',
         output: error.message,
@@ -88,13 +98,14 @@ ${task.plan}`
       })
     })
 
+    apiLogger.apiResponse('POST', `/api/tasks/${taskId}/approve`, 200, Date.now() - startTime)
     return NextResponse.json({
       success: true,
       message: 'Plan approved - Execution started',
       taskId
     })
   } catch (error) {
-    console.error('Failed to approve task:', error)
+    apiLogger.error('Failed to approve task', error)
     return NextResponse.json({ error: 'Failed to approve task' }, { status: 500 })
   }
 }

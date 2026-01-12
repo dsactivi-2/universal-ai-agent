@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import Anthropic from '@anthropic-ai/sdk'
+import { apiLogger } from '@/lib/logger'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
@@ -44,19 +45,24 @@ Halte die Analyse unter 500 Woertern. Sei praezise und fokussiert auf relevante 
 
 // POST /api/upload - Upload and analyze file
 export async function POST(request: NextRequest) {
+  const startTime = Date.now()
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File | null
     const taskId = formData.get('taskId') as string | null
 
     if (!file) {
+      apiLogger.warn('Upload attempted without file')
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
 
     // Check file size (max 10MB)
     if (file.size > 10 * 1024 * 1024) {
+      apiLogger.warn('File too large', { filename: file.name, size: file.size })
       return NextResponse.json({ error: 'File too large (max 10MB)' }, { status: 400 })
     }
+
+    apiLogger.info('File upload started', { filename: file.name, size: file.size, mimeType: file.type })
 
     // Create upload directory if not exists
     if (!existsSync(UPLOAD_DIR)) {
@@ -142,6 +148,14 @@ export async function POST(request: NextRequest) {
       analysis = `Datei: ${file.name} (${mimeType}, ${(file.size / 1024).toFixed(1)} KB)`
     }
 
+    apiLogger.info('File upload completed', {
+      fileId,
+      filename: file.name,
+      size: file.size,
+      durationMs: Date.now() - startTime,
+      analyzed: !!analysis
+    })
+
     return NextResponse.json({
       success: true,
       file: {
@@ -155,7 +169,7 @@ export async function POST(request: NextRequest) {
       }
     })
   } catch (error) {
-    console.error('Upload failed:', error)
+    apiLogger.error('Upload failed', error)
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
   }
 }

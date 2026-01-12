@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { AGENT_TOOLS } from './tools'
 import { ToolExecutor } from './tool-executor'
+import { orchestratorLogger, createLogger } from './logger'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
@@ -185,8 +186,10 @@ export class Orchestrator {
     const task = runningTasks.get(taskId)
     if (task) {
       task.aborted = true
+      orchestratorLogger.info('Task stop requested', { taskId })
       return true
     }
+    orchestratorLogger.warn('Stop requested for unknown task', { taskId })
     return false
   }
 
@@ -196,6 +199,9 @@ export class Orchestrator {
   }
 
   async handleRequest(request: OrchestratorRequest): Promise<OrchestratorResponse> {
+    const logger = createLogger('orchestrator', request.taskId)
+    logger.info(`Handling request in ${request.mode} mode`, { taskId: request.taskId })
+
     if (request.mode === 'plan') {
       return this.createPlan(request)
     } else {
@@ -204,9 +210,13 @@ export class Orchestrator {
   }
 
   private async createPlan(request: OrchestratorRequest): Promise<OrchestratorResponse> {
+    const logger = createLogger('orchestrator.plan', request.taskId)
     const startTime = Date.now()
 
+    logger.info('Starting plan creation', { taskId: request.taskId })
+
     if (!process.env.ANTHROPIC_API_KEY) {
+      logger.error('ANTHROPIC_API_KEY not configured', new Error('Missing API key'))
       return {
         taskId: request.taskId,
         success: false,
@@ -219,6 +229,7 @@ export class Orchestrator {
     }
 
     try {
+      logger.debug('Calling Claude API for planning')
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 8192,
@@ -243,6 +254,15 @@ Erstelle eine vollständige Analyse mit allen Empfehlungen, Alternativen und Imp
       const inputTokens = response.usage?.input_tokens || 0
       const outputTokens = response.usage?.output_tokens || 0
       const cost = (inputTokens * 0.003 + outputTokens * 0.015) / 1000
+      const duration = Date.now() - startTime
+
+      logger.info('Plan created successfully', {
+        taskId: request.taskId,
+        inputTokens,
+        outputTokens,
+        cost,
+        durationMs: duration
+      })
 
       return {
         taskId: request.taskId,
@@ -251,12 +271,13 @@ Erstelle eine vollständige Analyse mit allen Empfehlungen, Alternativen und Imp
         summary: 'Plan erstellt - Warte auf Bestätigung',
         plan: planText,
         stepResults: [],
-        totalDuration: Date.now() - startTime,
+        totalDuration: duration,
         totalCost: cost
       }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      logger.error('Plan creation failed', error, { taskId: request.taskId })
       return {
         taskId: request.taskId,
         success: false,
@@ -270,12 +291,16 @@ Erstelle eine vollständige Analyse mit allen Empfehlungen, Alternativen und Imp
   }
 
   private async executeTask(request: OrchestratorRequest): Promise<OrchestratorResponse> {
+    const logger = createLogger('orchestrator.exec', request.taskId)
     const startTime = Date.now()
     const stepResults: StepResult[] = []
     let totalInputTokens = 0
     let totalOutputTokens = 0
 
+    logger.info('Starting task execution', { taskId: request.taskId })
+
     if (!process.env.ANTHROPIC_API_KEY) {
+      logger.error('ANTHROPIC_API_KEY not configured', new Error('Missing API key'))
       return {
         taskId: request.taskId,
         success: false,
@@ -303,11 +328,13 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
 
       // Register task as running
       runningTasks.set(request.taskId, { aborted: false })
+      logger.debug('Task registered as running')
 
       while (!isComplete && iteration < this.maxIterations) {
         // Check if task was stopped
         const taskState = runningTasks.get(request.taskId)
         if (taskState?.aborted) {
+          logger.info('Task aborted by user', { taskId: request.taskId, iteration })
           runningTasks.delete(request.taskId)
           return {
             taskId: request.taskId,
@@ -321,6 +348,7 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
         }
 
         iteration++
+        logger.debug(`Execution iteration ${iteration}/${this.maxIterations}`)
 
         const response = await anthropic.messages.create({
           model: 'claude-sonnet-4-20250514',
@@ -349,12 +377,14 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
             })
 
             const stepStart = Date.now()
+            logger.debug(`Executing tool: ${block.name}`, { toolId: block.id })
             const result = await this.toolExecutor.execute(block.name, block.input)
             const stepDuration = Date.now() - stepStart
 
             if (block.name === 'task_complete') {
               isComplete = true
               finalOutput = result.output
+              logger.info('Task marked as complete')
             }
 
             const stepResult: StepResult = {
@@ -366,6 +396,11 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
               duration: stepDuration
             }
             stepResults.push(stepResult)
+
+            logger.toolExecution(block.name, result.success, stepDuration, {
+              step: stepResult.step,
+              taskId: request.taskId
+            })
 
             if (request.onStep) {
               request.onStep(stepResult)
@@ -397,13 +432,25 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
 
         if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
           isComplete = true
+          logger.debug('Task completed - end_turn with no tools')
         }
       }
 
       const cost = (totalInputTokens * 0.003 + totalOutputTokens * 0.015) / 1000
+      const duration = Date.now() - startTime
 
       // Cleanup running task
       runningTasks.delete(request.taskId)
+
+      logger.info('Task execution completed successfully', {
+        taskId: request.taskId,
+        iterations: iteration,
+        steps: stepResults.length,
+        durationMs: duration,
+        cost,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens
+      })
 
       return {
         taskId: request.taskId,
@@ -411,7 +458,7 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
         output: finalOutput,
         summary: finalOutput.slice(0, 300) + (finalOutput.length > 300 ? '...' : ''),
         stepResults,
-        totalDuration: Date.now() - startTime,
+        totalDuration: duration,
         totalCost: cost
       }
 
@@ -420,6 +467,7 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
       runningTasks.delete(request.taskId)
 
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      logger.error('Task execution failed', error, { taskId: request.taskId, steps: stepResults.length })
 
       // Get the last failed step if any
       const lastFailedStep = stepResults.filter(s => !s.success).pop()
@@ -430,6 +478,7 @@ Beginne jetzt mit der Ausführung. Nutze die verfügbaren Tools um die Aufgabe v
       let errorRecommendation = 'Bitte prüfen Sie die Fehlermeldung und versuchen Sie es erneut.'
 
       try {
+        logger.debug('Analyzing error with AI')
         const analysisResponse = await anthropic.messages.create({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1024,
@@ -458,12 +507,14 @@ ${stepResults.slice(-3).map(s => `- ${s.tool}: ${s.success ? 'OK' : 'FEHLER'}`).
           const analysis = JSON.parse(analysisText)
           errorReason = analysis.reason || errorMessage
           errorRecommendation = analysis.recommendation || errorRecommendation
+          logger.info('Error analyzed', { reason: errorReason, step: errorStep })
         } catch {
           // JSON parsing failed, use the raw text as recommendation
           errorRecommendation = analysisText.slice(0, 500)
+          logger.warn('Error analysis JSON parsing failed, using raw text')
         }
       } catch (analysisError) {
-        console.error('Error analysis failed:', analysisError)
+        logger.error('Error analysis failed', analysisError)
       }
 
       return {
