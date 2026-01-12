@@ -57,14 +57,22 @@ export async function POST(request: NextRequest) {
     }).then(result => {
       if (result.success && result.plan) {
         // Plan erstellt - warte auf Bestätigung
-        apiLogger.info('Planning completed', { taskId })
+        apiLogger.info('Planning completed', {
+          taskId,
+          estimatedSteps: result.estimatedSteps,
+          estimatedCost: result.estimatedCost
+        })
         updateTask(taskId, {
           phase: 'awaiting_approval',
           plan: result.plan,
           output: result.output,
           summary: 'Plan erstellt - Warte auf Bestätigung',
           totalDuration: result.totalDuration,
-          totalCost: result.totalCost
+          totalCost: result.totalCost,
+          estimatedSteps: result.estimatedSteps || 0,
+          estimatedCost: result.estimatedCost || 0,
+          progress: 0,
+          currentStep: 0
         })
       } else {
         // Planung fehlgeschlagen

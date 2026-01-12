@@ -35,6 +35,11 @@ interface Task {
   errorReason?: string
   errorRecommendation?: string
   errorStep?: string
+  // Cost estimation and progress
+  estimatedCost?: number
+  estimatedSteps?: number
+  currentStep?: number
+  progress?: number
 }
 
 interface Message {
@@ -557,6 +562,24 @@ export default function Dashboard() {
               {task.status.phase === 'awaiting_approval' && (
                 <div className="text-sm text-yellow-600 font-medium">
                   Plan wartet auf Bestaetigung
+                  {task.estimatedCost !== undefined && task.estimatedCost > 0 && (
+                    <span className="ml-2 text-gray-500">(~${task.estimatedCost.toFixed(2)})</span>
+                  )}
+                </div>
+              )}
+              {/* Progress Bar for Executing Tasks */}
+              {task.status.phase === 'executing' && (
+                <div className="mt-2">
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>{task.progress || 0}%</span>
+                    <span>Schritt {task.currentStep || 0}/{task.estimatedSteps || '?'}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-1.5">
+                    <div
+                      className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                      style={{ width: `${task.progress || 0}%` }}
+                    />
+                  </div>
                 </div>
               )}
               {task.actionRequired && (
@@ -803,11 +826,49 @@ export default function Dashboard() {
               {/* Content Area */}
               <div className="flex-1 overflow-y-auto p-4">
                 {/* Task Info */}
-                <div className="mb-4 p-3 bg-gray-50 rounded text-sm grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <div><strong>ID:</strong> {selectedTask.id.slice(0, 8)}...</div>
-                  <div><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</div>
-                  {selectedTask.totalDuration && <div><strong>Dauer:</strong> {(selectedTask.totalDuration / 1000).toFixed(1)}s</div>}
-                  {selectedTask.totalCost !== undefined && <div><strong>Kosten:</strong> ${selectedTask.totalCost.toFixed(4)}</div>}
+                <div className="mb-4 p-3 bg-gray-50 rounded text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                    <div><strong>ID:</strong> {selectedTask.id.slice(0, 8)}...</div>
+                    <div><strong>Erstellt:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</div>
+                    {selectedTask.totalDuration && <div><strong>Dauer:</strong> {(selectedTask.totalDuration / 1000).toFixed(1)}s</div>}
+                    {selectedTask.totalCost !== undefined && (
+                      <div>
+                        <strong>Kosten:</strong> ${selectedTask.totalCost.toFixed(4)}
+                        {selectedTask.estimatedCost !== undefined && selectedTask.estimatedCost > 0 && (
+                          <span className="text-gray-500 ml-1">(~${selectedTask.estimatedCost.toFixed(2)} gesch.)</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Progress Bar for Executing Tasks */}
+                  {selectedTask.status.phase === 'executing' && (
+                    <div className="mt-3">
+                      <div className="flex justify-between text-xs text-gray-600 mb-1">
+                        <span>Fortschritt: {selectedTask.progress || 0}%</span>
+                        <span>Schritt {selectedTask.currentStep || 0} / {selectedTask.estimatedSteps || '?'}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${selectedTask.progress || 0}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cost Estimate Info for Awaiting Approval */}
+                  {selectedTask.status.phase === 'awaiting_approval' && selectedTask.estimatedCost !== undefined && selectedTask.estimatedCost > 0 && (
+                    <div className="mt-3 p-2 bg-blue-50 rounded border border-blue-200">
+                      <div className="flex items-center gap-2 text-blue-800">
+                        <span className="text-lg">💵</span>
+                        <div>
+                          <strong>Geschaetzte Ausfuehrungskosten:</strong> ${selectedTask.estimatedCost.toFixed(2)}
+                          <span className="text-gray-600 ml-2">({selectedTask.estimatedSteps || '?'} Schritte)</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Plan Tab */}

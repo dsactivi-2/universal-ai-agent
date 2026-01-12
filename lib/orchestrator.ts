@@ -45,6 +45,9 @@ export interface OrchestratorResponse {
   errorReason?: string
   errorRecommendation?: string
   errorStep?: string
+  // Cost estimation
+  estimatedSteps?: number
+  estimatedCost?: number
 }
 
 const PLANNING_SYSTEM_PROMPT = `Du bist ein erfahrener Software-Architekt und Berater. Deine Aufgabe ist es, Projekte zu ANALYSIEREN und einen detaillierten PLAN zu erstellen - NOCH NICHT umzusetzen.
@@ -79,6 +82,19 @@ Bei jeder Aufgabe sollst du:
 
 6. **GESCHÄTZTER AUFWAND**
    - Ungefähre Komplexität (Einfach/Mittel/Komplex)
+
+7. **💵 API-KOSTENPROGNOSE**
+   WICHTIG: Berechne am Ende IMMER eine geschätzte API-Kostenprognose basierend auf:
+   - Anzahl der geschätzten Tool-Aufrufe (Dateien lesen/schreiben, Bash-Befehle, etc.)
+   - Geschätzte Token-Nutzung pro Iteration
+   - Claude Sonnet Preise: $0.003/1K Input, $0.015/1K Output
+
+   Gib am ENDE des Plans folgende Zeile aus (EXAKT dieses Format):
+
+   ---ESTIMATE---
+   STEPS: [Zahl der geschätzten Schritte]
+   COST_USD: [Geschätzte Kosten in USD, z.B. 0.15]
+   ---END_ESTIMATE---
 
 Erstelle NUR den Plan - implementiere noch nichts!`
 
@@ -204,23 +220,40 @@ Erstelle eine vollständige Analyse mit allen Empfehlungen, Alternativen und Imp
       const cost = (inputTokens * 0.003 + outputTokens * 0.015) / 1000
       const duration = Date.now() - startTime
 
+      // Parse estimate from plan
+      let estimatedSteps = 0
+      let estimatedCost = 0
+      const estimateMatch = planText.match(/---ESTIMATE---[\s\S]*?STEPS:\s*(\d+)[\s\S]*?COST_USD:\s*([\d.]+)[\s\S]*?---END_ESTIMATE---/)
+      if (estimateMatch) {
+        estimatedSteps = parseInt(estimateMatch[1], 10) || 0
+        estimatedCost = parseFloat(estimateMatch[2]) || 0
+        logger.info('Parsed cost estimate', { estimatedSteps, estimatedCost })
+      }
+
+      // Remove estimate block from displayed plan
+      const cleanPlan = planText.replace(/---ESTIMATE---[\s\S]*?---END_ESTIMATE---/g, '').trim()
+
       logger.info('Plan created successfully', {
         taskId: request.taskId,
         inputTokens,
         outputTokens,
         cost,
-        durationMs: duration
+        durationMs: duration,
+        estimatedSteps,
+        estimatedCost
       })
 
       return {
         taskId: request.taskId,
         success: true,
-        output: planText,
+        output: cleanPlan,
         summary: 'Plan erstellt - Warte auf Bestätigung',
-        plan: planText,
+        plan: cleanPlan,
         stepResults: [],
         totalDuration: duration,
-        totalCost: cost
+        totalCost: cost,
+        estimatedSteps,
+        estimatedCost
       }
 
     } catch (error) {

@@ -39,7 +39,10 @@ export async function POST(
       summary: 'Plan genehmigt - Ausführung gestartet'
     })
 
-    // Step callback to save steps to database
+    // Get estimated steps for progress calculation
+    const estimatedSteps = task.estimatedSteps || 10 // Default to 10 if not set
+
+    // Step callback to save steps to database and update progress
     const onStep = (step: StepResult) => {
       addStep(
         taskId,
@@ -50,6 +53,14 @@ export async function POST(
         step.success,
         step.duration
       )
+
+      // Calculate and update progress
+      const progress = Math.min(Math.round((step.step / estimatedSteps) * 100), 99) // Cap at 99% until complete
+      updateTask(taskId, {
+        currentStep: step.step,
+        progress
+      })
+      logger.debug('Progress updated', { step: step.step, estimatedSteps, progress })
     }
 
     // Start execution with the original goal + plan context
@@ -72,7 +83,9 @@ ${task.plan}`
           output: result.output,
           summary: result.summary,
           totalDuration: (task.totalDuration || 0) + result.totalDuration,
-          totalCost: (task.totalCost || 0) + result.totalCost
+          totalCost: (task.totalCost || 0) + result.totalCost,
+          progress: 100,
+          currentStep: result.stepResults.length
         })
       } else {
         // Save error details for failed tasks

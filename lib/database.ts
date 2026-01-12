@@ -62,6 +62,20 @@ try {
   db.exec(`ALTER TABLE tasks ADD COLUMN error_step TEXT`)
 } catch { /* exists */ }
 
+// Add cost estimation and progress tracking columns
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN estimated_cost REAL DEFAULT 0`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN estimated_steps INTEGER DEFAULT 0`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN current_step INTEGER DEFAULT 0`)
+} catch { /* exists */ }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN progress INTEGER DEFAULT 0`)
+} catch { /* exists */ }
+
 // Messages table for task conversations
 db.exec(`
   CREATE TABLE IF NOT EXISTS messages (
@@ -125,6 +139,11 @@ export interface Task {
   errorReason?: string
   errorRecommendation?: string
   errorStep?: string
+  // Cost estimation and progress tracking
+  estimatedCost?: number
+  estimatedSteps?: number
+  currentStep?: number
+  progress?: number
 }
 
 export interface Message {
@@ -189,7 +208,11 @@ export function getAllTasks(): Task[] {
     actionBlocking: row.action_blocking === 1,
     errorReason: row.error_reason,
     errorRecommendation: row.error_recommendation,
-    errorStep: row.error_step
+    errorStep: row.error_step,
+    estimatedCost: row.estimated_cost,
+    estimatedSteps: row.estimated_steps,
+    currentStep: row.current_step,
+    progress: row.progress
   }))
   } catch (error) {
     dbLogger.error('getAllTasks failed', error)
@@ -226,7 +249,11 @@ export function getTaskById(id: string): Task | null {
       actionBlocking: row.action_blocking === 1,
       errorReason: row.error_reason,
       errorRecommendation: row.error_recommendation,
-      errorStep: row.error_step
+      errorStep: row.error_step,
+      estimatedCost: row.estimated_cost,
+      estimatedSteps: row.estimated_steps,
+      currentStep: row.current_step,
+      progress: row.progress
     }
   } catch (error) {
     dbLogger.error('getTaskById failed', error, { taskId: id })
@@ -274,6 +301,10 @@ export function updateTask(id: string, updates: Partial<{
   errorReason: string
   errorRecommendation: string
   errorStep: string
+  estimatedCost: number
+  estimatedSteps: number
+  currentStep: number
+  progress: number
 }>): Task | null {
   try {
     const now = new Date().toISOString()
@@ -299,6 +330,10 @@ export function updateTask(id: string, updates: Partial<{
           error_reason = COALESCE(?, error_reason),
           error_recommendation = COALESCE(?, error_recommendation),
           error_step = COALESCE(?, error_step),
+          estimated_cost = COALESCE(?, estimated_cost),
+          estimated_steps = COALESCE(?, estimated_steps),
+          current_step = COALESCE(?, current_step),
+          progress = COALESCE(?, progress),
           updated_at = ?
       WHERE id = ?
     `)
@@ -317,6 +352,10 @@ export function updateTask(id: string, updates: Partial<{
       updates.errorReason,
       updates.errorRecommendation,
       updates.errorStep,
+      updates.estimatedCost,
+      updates.estimatedSteps,
+      updates.currentStep,
+      updates.progress,
       now,
       id
     )
