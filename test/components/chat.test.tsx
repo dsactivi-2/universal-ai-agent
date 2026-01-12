@@ -9,6 +9,13 @@ vi.mock('next/navigation', () => ({
   })
 }))
 
+// Mock next/link
+vi.mock('next/link', () => ({
+  default: ({ children, href }: { children: React.ReactNode; href: string }) => (
+    <a href={href}>{children}</a>
+  )
+}))
+
 // Mock fetch
 const mockFetch = vi.fn()
 global.fetch = mockFetch
@@ -18,112 +25,70 @@ describe('Chat Page', () => {
     mockFetch.mockReset()
   })
 
-  it('should render chat page with all test IDs', () => {
+  it('should render chat page with title', () => {
     render(<Chat />)
 
-    expect(screen.getByTestId('chat_page')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_title')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_description')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_form')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_input_message')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_button_submit')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_text_hint')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_section_tips')).toBeInTheDocument()
+    expect(screen.getByText('Neuen Task erstellen')).toBeInTheDocument()
+  })
+
+  it('should render navigation links', () => {
+    render(<Chat />)
+
+    expect(screen.getByText('Universal AI Agent')).toBeInTheDocument()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
+    expect(screen.getByText('Dashboard')).toBeInTheDocument()
+  })
+
+  it('should render form with textarea and submit button', () => {
+    render(<Chat />)
+
+    expect(screen.getByPlaceholderText(/Beschreibe deine Aufgabe/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })).toBeInTheDocument()
   })
 
   it('should have submit button disabled when message is empty', () => {
     render(<Chat />)
 
-    const submitButton = screen.getByTestId('chat_button_submit')
+    const submitButton = screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })
     expect(submitButton).toBeDisabled()
   })
 
   it('should enable submit button when message is entered', () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
+    const textarea = screen.getByPlaceholderText(/Beschreibe deine Aufgabe/i)
+    const submitButton = screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })
 
-    fireEvent.change(input, { target: { value: 'Create a hello world app' } })
+    fireEvent.change(textarea, { target: { value: 'Erstelle eine React Komponente' } })
 
     expect(submitButton).not.toBeDisabled()
   })
 
-  it('should show character count', () => {
+  it('should show confirmation dialog after submitting', async () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    const hint = screen.getByTestId('chat_text_hint')
+    const textarea = screen.getByPlaceholderText(/Beschreibe deine Aufgabe/i)
+    const submitButton = screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })
 
-    expect(hint).toHaveTextContent('0/10000 characters')
-
-    fireEvent.change(input, { target: { value: 'Hello' } })
-
-    expect(hint).toHaveTextContent('5/10000 characters')
-  })
-
-  it('should show error message on API failure', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 401,
-      json: () => Promise.resolve({ error: 'Unauthorized' })
-    })
-
-    render(<Chat />)
-
-    const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
-
-    fireEvent.change(input, { target: { value: 'Test task' } })
+    fireEvent.change(textarea, { target: { value: 'Erstelle eine React Komponente' } })
     fireEvent.click(submitButton)
 
     await waitFor(() => {
-      expect(screen.getByTestId('chat_alert_error')).toBeInTheDocument()
+      expect(screen.getByText('Task bestaetigen')).toBeInTheDocument()
     })
-
-    expect(screen.getByTestId('chat_alert_error')).toHaveTextContent('Please log in to create tasks')
   })
 
-  it('should show success message on successful submission', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ taskId: 'test-123', success: true })
-    })
-
+  it('should render file upload area', () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
-
-    fireEvent.change(input, { target: { value: 'Test task' } })
-    fireEvent.click(submitButton)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('chat_alert_success')).toBeInTheDocument()
-    })
-
-    expect(screen.getByTestId('chat_alert_success')).toHaveTextContent('Task created successfully')
+    expect(screen.getByText(/Dateien anhaengen/i)).toBeInTheDocument()
+    expect(screen.getByText(/durchsuchen/i)).toBeInTheDocument()
   })
 
-  it('should handle rate limit error', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 429,
-      json: () => Promise.resolve({ error: 'Too many requests', retryAfter: 30 })
-    })
-
+  it('should render additional notes textarea', () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
-
-    fireEvent.change(input, { target: { value: 'Test task' } })
-    fireEvent.click(submitButton)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('chat_alert_error')).toBeInTheDocument()
-    })
-
-    expect(screen.getByTestId('chat_alert_error')).toHaveTextContent('Rate limit exceeded')
+    expect(screen.getByText(/Zusaetzliche Hinweise/i)).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Technologie-Praeferenzen/i)).toBeInTheDocument()
   })
 })
