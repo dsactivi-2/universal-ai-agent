@@ -29,7 +29,7 @@ export function verifyToken(token: string): AuthUser | null {
  * Generate JWT token for user
  */
 export function generateToken(user: AuthUser, expiresIn: string = '24h'): string {
-  return jwt.sign(user, JWT_SECRET, { expiresIn })
+  return jwt.sign(user as object, JWT_SECRET, { expiresIn } as jwt.SignOptions)
 }
 
 /**
