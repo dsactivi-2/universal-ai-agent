@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, setTaskAction, clearTaskAction, addMessage } from '@/lib/database'
 import { v4 as uuidv4 } from 'uuid'
+import { requireAuth } from '@/lib/auth'
 
 // POST /api/tasks/[id]/action - Set action required
 export async function POST(
@@ -8,6 +9,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
     const { actionType, actionMessage, blocking } = await request.json()
 
@@ -42,6 +47,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
     const body = await request.json().catch(() => ({}))
     const { userInput } = body

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById } from '@/lib/database'
 import fs from 'fs'
 import path from 'path'
+import { requireAuth } from '@/lib/auth'
 
 const WORKSPACE_ROOT = process.env.WORKSPACE_PATH || '/app/workspace'
 
@@ -11,6 +12,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string; path: string[] }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId, path: pathSegments } = await params
 
     // Check if task exists

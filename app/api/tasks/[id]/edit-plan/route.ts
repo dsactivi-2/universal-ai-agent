@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask } from '@/lib/database'
 import Anthropic from '@anthropic-ai/sdk'
+import { authAndLLMRateLimit } from '@/lib/auth'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
@@ -36,6 +37,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth + LLM Rate Limit prüfen (enthält AI Review)
+    const authResult = authAndLLMRateLimit(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
     const { plan } = await request.json()
 

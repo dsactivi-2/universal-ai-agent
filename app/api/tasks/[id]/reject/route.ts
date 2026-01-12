@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask } from '@/lib/database'
 import { Orchestrator } from '@/lib/orchestrator'
+import { requireAuth } from '@/lib/auth'
 
 const orchestrator = new Orchestrator()
 
@@ -10,6 +11,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
     const body = await request.json().catch(() => ({}))
     const { feedback, regenerate = false } = body as { feedback?: string; regenerate?: boolean }

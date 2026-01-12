@@ -5,6 +5,7 @@ import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import Anthropic from '@anthropic-ai/sdk'
 import { apiLogger } from '@/lib/logger'
+import { authAndRateLimit } from '@/lib/auth'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || ''
@@ -47,6 +48,10 @@ Halte die Analyse unter 500 Woertern. Sei praezise und fokussiert auf relevante 
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
   try {
+    // Auth + Rate Limit prüfen
+    const authResult = authAndRateLimit(request)
+    if ('error' in authResult) return authResult.error
+
     const formData = await request.formData()
     const file = formData.get('file') as File | null
     const taskId = formData.get('taskId') as string | null

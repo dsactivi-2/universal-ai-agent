@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask, addStep } from '@/lib/database'
 import { Orchestrator, StepResult } from '@/lib/orchestrator'
 import { apiLogger, createLogger } from '@/lib/logger'
+import { requireAuth } from '@/lib/auth'
 
 const orchestrator = new Orchestrator()
 
@@ -12,6 +13,10 @@ export async function POST(
 ) {
   const startTime = Date.now()
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
     const logger = createLogger('api.approve', taskId)
 

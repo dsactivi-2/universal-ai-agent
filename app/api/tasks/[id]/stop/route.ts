@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask } from '@/lib/database'
 import { Orchestrator } from '@/lib/orchestrator'
+import { requireAuth } from '@/lib/auth'
 
 // POST /api/tasks/[id]/stop - Stop a running task
 export async function POST(
@@ -8,6 +9,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
 
     // Check if task exists

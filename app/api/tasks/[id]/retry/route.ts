@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, updateTask, deleteStepsByTaskId, addStep } from '@/lib/database'
 import { Orchestrator, StepResult } from '@/lib/orchestrator'
+import { requireAuth } from '@/lib/auth'
 
 const orchestrator = new Orchestrator()
 
@@ -10,6 +11,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
 
     // Check if task exists

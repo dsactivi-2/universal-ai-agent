@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getAllTasks, createTask, updateTask, getTaskStats, addStep } from '@/lib/database'
 import { Orchestrator, StepResult } from '@/lib/orchestrator'
 import { apiLogger } from '@/lib/logger'
+import { requireAuth, authAndRateLimit } from '@/lib/auth'
 
 const orchestrator = new Orchestrator()
 
@@ -10,6 +11,10 @@ const orchestrator = new Orchestrator()
 export async function GET(request: NextRequest) {
   const startTime = Date.now()
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { searchParams } = new URL(request.url)
     const statsOnly = searchParams.get('stats')
 
@@ -32,6 +37,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
   try {
+    // Auth + Rate Limit prüfen
+    const authResult = authAndRateLimit(request)
+    if ('error' in authResult) return authResult.error
+
     const { message } = await request.json()
 
     if (!message || typeof message !== 'string') {
@@ -107,6 +116,10 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const startTime = Date.now()
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
 
@@ -136,6 +149,10 @@ export async function DELETE(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const startTime = Date.now()
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id, phase, output, summary, plan } = await request.json()
 
     if (!id) {

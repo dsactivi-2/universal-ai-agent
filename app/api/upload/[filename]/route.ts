@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
+import { requireAuth } from '@/lib/auth'
 
 const UPLOAD_DIR = path.join(process.cwd(), 'data', 'uploads')
 
@@ -11,6 +12,10 @@ export async function GET(
   { params }: { params: Promise<{ filename: string }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { filename } = await params
 
     // Security: Prevent path traversal

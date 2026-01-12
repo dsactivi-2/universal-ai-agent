@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTaskById, getStepsByTaskId, getMessagesByTaskId } from '@/lib/database'
+import { requireAuth } from '@/lib/auth'
 
 // GET /api/tasks/[id] - Get single task with full details
 export async function GET(
@@ -7,6 +8,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth prüfen
+    const authResult = requireAuth(request)
+    if ('error' in authResult) return authResult.error
+
     const { id: taskId } = await params
     const { searchParams } = new URL(request.url)
     const includeSteps = searchParams.get('steps') === 'true'
