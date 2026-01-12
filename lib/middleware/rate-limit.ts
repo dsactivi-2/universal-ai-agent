@@ -11,11 +11,11 @@ const rateLimitStore = new Map<string, RateLimitEntry>()
 // Cleanup old entries every 5 minutes
 setInterval(() => {
   const now = Date.now()
-  for (const [key, entry] of rateLimitStore.entries()) {
+  rateLimitStore.forEach((entry, key) => {
     if (entry.resetTime < now) {
       rateLimitStore.delete(key)
     }
-  }
+  })
 }, 5 * 60 * 1000)
 
 export interface RateLimitConfig {
