@@ -80,62 +80,10 @@ Bei jeder Aufgabe sollst du:
 6. **GESCHÄTZTER AUFWAND**
    - Ungefähre Komplexität (Einfach/Mittel/Komplex)
 
-BEISPIEL für "Erstelle einen Call Agent auf Deutsch":
-
----
-## 📋 ANALYSE
-Du möchtest einen KI-gestützten Telefon-Agenten, der auf Deutsch Anrufe entgegennimmt und automatisch beantwortet.
-
-## 🔧 TECHNOLOGIE-EMPFEHLUNGEN
-
-### LLM (Sprachmodell)
-- **Empfehlung**: Claude 3.5 Sonnet
-- **Begründung**: Exzellente deutsche Sprachfähigkeiten, schnelle Antwortzeiten
-- **Alternativen**: GPT-4, Gemini Pro
-
-### Voice/TTS (Text-zu-Sprache)
-- **Empfehlung**: ElevenLabs (Deutsch)
-- **Begründung**: Natürlichste deutsche Stimmen
-- **Kosten**: ~$0.30/1000 Zeichen
-- **Alternativen**: Azure Neural TTS, Google Cloud TTS
-
-### STT (Sprache-zu-Text)
-- **Empfehlung**: Deepgram
-- **Begründung**: Echtzeit-Transkription, gute deutsche Erkennung
-- **Alternativen**: Whisper, Google Speech-to-Text
-
-### Telefonie-Provider
-- **Empfehlung**: Twilio
-- **Begründung**: Zuverlässig, deutsche Nummern verfügbar
-- **Kosten**: ~€0.01/Minute eingehend
-- **Alternativen**: Vonage, Plivo
-
-### Backend
-- **Empfehlung**: Node.js + Express
-- **Begründung**: Einfache WebSocket-Integration für Echtzeit
-
-## 🏗️ ARCHITEKTUR
-[Diagramm-Beschreibung]
-
-## 📝 IMPLEMENTIERUNGS-SCHRITTE
-1. Twilio-Account erstellen und deutsche Nummer kaufen
-2. Backend-Server mit WebSocket aufsetzen
-3. Deepgram STT integrieren
-4. Claude API für Antwort-Generierung
-5. ElevenLabs TTS integrieren
-6. Twilio Webhook verbinden
-7. Testen und optimieren
-
-## ⚠️ RISIKEN & HINWEISE
-- Latenz: Gesamtlatenz unter 1s halten für natürliches Gespräch
-- Kosten: Bei hohem Volumen können Kosten steigen
-- DSGVO: Datenschutz bei Gesprächsaufzeichnung beachten
-
-## 📊 GESCHÄTZTER AUFWAND
-**Komplexität**: Mittel
----
-
 Erstelle NUR den Plan - implementiere noch nichts!`
+
+// Workspace root from environment or default
+const WORKSPACE_ROOT = process.env.AGENT_WORKSPACE || '/app/workspace'
 
 const EXECUTION_SYSTEM_PROMPT = `Du bist ein autonomer AI-Agent, der Programmieraufgaben selbstständig ausführen kann.
 
@@ -159,7 +107,7 @@ WICHTIGE REGELN:
 6. Bei Fehlern: Analysiere und behebe sie selbstständig
 7. Erstelle sauberen, gut strukturierten Code
 
-Arbeitsverzeichnis: /app/workspace
+Arbeitsverzeichnis: ${WORKSPACE_ROOT}
 Hier werden alle Dateien erstellt und Befehle ausgeführt.`
 
 const ERROR_ANALYSIS_PROMPT = `Du bist ein erfahrener Fehleranalyst. Analysiere den folgenden Fehler und gib eine strukturierte Antwort.

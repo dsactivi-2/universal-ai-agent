@@ -21,11 +21,15 @@ export interface LogEntry {
   meta?: Record<string, unknown>
 }
 
-// Logger configuration
-const LOG_DIR = path.join(process.cwd(), 'data', 'logs')
+// Logger configuration - use absolute path for production reliability
+const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'data', 'logs')
 const LOG_LEVEL = (process.env.LOG_LEVEL || 'INFO').toUpperCase() as keyof typeof LogLevel
 const MAX_LOG_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_LOG_FILES = 5
+const FILE_LOGGING_ENABLED = process.env.DISABLE_FILE_LOGGING !== 'true'
+
+// Track if we've logged the initialization
+let initialized = false
 
 // Ensure log directory exists
 function ensureLogDir() {
@@ -120,24 +124,36 @@ function formatLogEntry(entry: LogEntry): string {
 
 // Write to log file
 function writeToFile(entry: LogEntry) {
+  if (!FILE_LOGGING_ENABLED) return
+
   try {
     ensureLogDir()
+
+    // Log initialization once
+    if (!initialized) {
+      initialized = true
+      console.log(`[LOGGER] Initialized - LOG_DIR: ${LOG_DIR}, LEVEL: ${LOG_LEVEL}`)
+    }
 
     const appLogPath = getLogFilePath('app')
     rotateLogsIfNeeded(appLogPath)
 
     const line = formatLogEntry(entry) + '\n'
-    fs.appendFileSync(appLogPath, line)
+    fs.appendFileSync(appLogPath, line, { encoding: 'utf-8', flag: 'a' })
 
     // Also write errors to separate error log
     if (entry.level === 'ERROR') {
       const errorLogPath = getLogFilePath('error')
       rotateLogsIfNeeded(errorLogPath)
-      fs.appendFileSync(errorLogPath, line)
+      fs.appendFileSync(errorLogPath, line, { encoding: 'utf-8', flag: 'a' })
     }
-  } catch {
-    // Fallback to console if file write fails
-    console.error('Failed to write to log file')
+  } catch (err) {
+    // Fallback to console if file write fails - only log once per session
+    if (!initialized) {
+      initialized = true
+      console.error(`[LOGGER] File logging failed: ${err instanceof Error ? err.message : err}`)
+      console.error(`[LOGGER] LOG_DIR was: ${LOG_DIR}`)
+    }
   }
 }
 
