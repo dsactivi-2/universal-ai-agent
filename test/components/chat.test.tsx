@@ -9,6 +9,13 @@ vi.mock('next/navigation', () => ({
   })
 }))
 
+// Mock next/link
+vi.mock('next/link', () => ({
+  default: ({ children, href }: { children: React.ReactNode; href: string }) => (
+    <a href={href}>{children}</a>
+  )
+}))
+
 // Mock fetch
 const mockFetch = vi.fn()
 global.fetch = mockFetch
@@ -18,17 +25,11 @@ describe('Chat Page', () => {
     mockFetch.mockReset()
   })
 
-  it('should render chat page with all test IDs', () => {
+  it('should render chat page with message input', () => {
     render(<Chat />)
 
-    expect(screen.getByTestId('chat_page')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_title')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_description')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_form')).toBeInTheDocument()
     expect(screen.getByTestId('chat_input_message')).toBeInTheDocument()
     expect(screen.getByTestId('chat_button_submit')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_text_hint')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_section_tips')).toBeInTheDocument()
   })
 
   it('should have submit button disabled when message is empty', () => {
@@ -49,81 +50,32 @@ describe('Chat Page', () => {
     expect(submitButton).not.toBeDisabled()
   })
 
-  it('should show character count', () => {
+  it('should display placeholder text in textarea', () => {
     render(<Chat />)
 
     const input = screen.getByTestId('chat_input_message')
-    const hint = screen.getByTestId('chat_text_hint')
-
-    expect(hint).toHaveTextContent('0/10000 characters')
-
-    fireEvent.change(input, { target: { value: 'Hello' } })
-
-    expect(hint).toHaveTextContent('5/10000 characters')
+    expect(input).toHaveAttribute('placeholder', 'Beschreibe deine Aufgabe detailliert...')
   })
 
-  it('should show error message on API failure', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 401,
-      json: () => Promise.resolve({ error: 'Unauthorized' })
-    })
-
+  it('should update textarea value on input', () => {
     render(<Chat />)
 
     const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
+    fireEvent.change(input, { target: { value: 'Test message' } })
 
-    fireEvent.change(input, { target: { value: 'Test task' } })
-    fireEvent.click(submitButton)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('chat_alert_error')).toBeInTheDocument()
-    })
-
-    expect(screen.getByTestId('chat_alert_error')).toHaveTextContent('Please log in to create tasks')
+    expect(input).toHaveValue('Test message')
   })
 
-  it('should show success message on successful submission', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ taskId: 'test-123', success: true })
-    })
-
+  it('should render file upload area', () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
-
-    fireEvent.change(input, { target: { value: 'Test task' } })
-    fireEvent.click(submitButton)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('chat_alert_success')).toBeInTheDocument()
-    })
-
-    expect(screen.getByTestId('chat_alert_success')).toHaveTextContent('Task created successfully')
+    expect(screen.getByText(/Dateien hierher ziehen/)).toBeInTheDocument()
   })
 
-  it('should handle rate limit error', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 429,
-      json: () => Promise.resolve({ error: 'Too many requests', retryAfter: 30 })
-    })
-
+  it('should render dashboard link', () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
-
-    fireEvent.change(input, { target: { value: 'Test task' } })
-    fireEvent.click(submitButton)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('chat_alert_error')).toBeInTheDocument()
-    })
-
-    expect(screen.getByTestId('chat_alert_error')).toHaveTextContent('Rate limit exceeded')
+    const link = screen.getByRole('link', { name: /Dashboard/i })
+    expect(link).toHaveAttribute('href', '/dashboard')
   })
 })

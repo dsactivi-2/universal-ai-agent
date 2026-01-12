@@ -289,6 +289,7 @@ export default function Chat() {
                 Was soll der Agent tun?
               </label>
               <textarea
+                data-testid="chat_input_message"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Beschreibe deine Aufgabe detailliert..."
@@ -389,6 +390,7 @@ export default function Chat() {
             </div>
 
             <button
+              data-testid="chat_button_submit"
               type="submit"
               disabled={!message.trim()}
               className="w-full px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
