@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuth, AuthUser } from '@/lib/middleware/auth'
+import { requireAuth } from '@/lib/auth'
 
-async function handleMe(request: NextRequest, user: AuthUser): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAuth(request)
+  if ('error' in auth) return auth.error
+
   return NextResponse.json({
     success: true,
     user: {
-      id: user.id,
-      email: user.email,
-      role: user.role
+      id: auth.user.userId,
+      email: auth.user.email,
+      role: auth.user.role
     }
   })
 }
-
-export const GET = withAuth(handleMe)

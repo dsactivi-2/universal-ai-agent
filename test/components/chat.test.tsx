@@ -25,57 +25,70 @@ describe('Chat Page', () => {
     mockFetch.mockReset()
   })
 
-  it('should render chat page with message input', () => {
+  it('should render chat page with title', () => {
     render(<Chat />)
 
-    expect(screen.getByTestId('chat_input_message')).toBeInTheDocument()
-    expect(screen.getByTestId('chat_button_submit')).toBeInTheDocument()
+    expect(screen.getByText('Neuen Task erstellen')).toBeInTheDocument()
+  })
+
+  it('should render navigation links', () => {
+    render(<Chat />)
+
+    expect(screen.getByText('Universal AI Agent')).toBeInTheDocument()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
+    expect(screen.getByText('Dashboard')).toBeInTheDocument()
+  })
+
+  it('should render form with textarea and submit button', () => {
+    render(<Chat />)
+
+    expect(screen.getByPlaceholderText(/Beschreibe deine Aufgabe/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })).toBeInTheDocument()
   })
 
   it('should have submit button disabled when message is empty', () => {
     render(<Chat />)
 
-    const submitButton = screen.getByTestId('chat_button_submit')
+    const submitButton = screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })
     expect(submitButton).toBeDisabled()
   })
 
   it('should enable submit button when message is entered', () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    const submitButton = screen.getByTestId('chat_button_submit')
+    const textarea = screen.getByPlaceholderText(/Beschreibe deine Aufgabe/i)
+    const submitButton = screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })
 
-    fireEvent.change(input, { target: { value: 'Create a hello world app' } })
+    fireEvent.change(textarea, { target: { value: 'Erstelle eine React Komponente' } })
 
     expect(submitButton).not.toBeDisabled()
   })
 
-  it('should display placeholder text in textarea', () => {
+  it('should show confirmation dialog after submitting', async () => {
     render(<Chat />)
 
-    const input = screen.getByTestId('chat_input_message')
-    expect(input).toHaveAttribute('placeholder', 'Beschreibe deine Aufgabe detailliert...')
-  })
+    const textarea = screen.getByPlaceholderText(/Beschreibe deine Aufgabe/i)
+    const submitButton = screen.getByRole('button', { name: /Vorschau & Bestaetigen/i })
 
-  it('should update textarea value on input', () => {
-    render(<Chat />)
+    fireEvent.change(textarea, { target: { value: 'Erstelle eine React Komponente' } })
+    fireEvent.click(submitButton)
 
-    const input = screen.getByTestId('chat_input_message')
-    fireEvent.change(input, { target: { value: 'Test message' } })
-
-    expect(input).toHaveValue('Test message')
+    await waitFor(() => {
+      expect(screen.getByText('Task bestaetigen')).toBeInTheDocument()
+    })
   })
 
   it('should render file upload area', () => {
     render(<Chat />)
 
-    expect(screen.getByText(/Dateien hierher ziehen/)).toBeInTheDocument()
+    expect(screen.getByText(/Dateien anhaengen/i)).toBeInTheDocument()
+    expect(screen.getByText(/durchsuchen/i)).toBeInTheDocument()
   })
 
-  it('should render dashboard link', () => {
+  it('should render additional notes textarea', () => {
     render(<Chat />)
 
-    const link = screen.getByRole('link', { name: /Dashboard/i })
-    expect(link).toHaveAttribute('href', '/dashboard')
+    expect(screen.getByText(/Zusaetzliche Hinweise/i)).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Technologie-Praeferenzen/i)).toBeInTheDocument()
   })
 })
