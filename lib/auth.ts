@@ -5,7 +5,19 @@ import crypto from 'crypto'
 // AUTH MODULE - JWT-basierte Authentifizierung
 // ============================================================
 
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex')
+// SECURITY: JWT_SECRET MUST be set in production
+// Never use a fallback - that would invalidate all tokens on restart
+const JWT_SECRET = process.env.JWT_SECRET
+if (!JWT_SECRET) {
+  console.error('[AUTH] CRITICAL: JWT_SECRET environment variable is not set!')
+  console.error('[AUTH] Set JWT_SECRET in .env file or environment variables')
+  console.error('[AUTH] Generate with: openssl rand -base64 32')
+  // In development, we throw immediately; in production, we log but continue to avoid crashes
+  if (process.env.NODE_ENV === 'development') {
+    throw new Error('JWT_SECRET environment variable is required')
+  }
+}
+
 const TOKEN_EXPIRY = 24 * 60 * 60 * 1000 // 24 Stunden
 
 export interface JWTPayload {
@@ -47,6 +59,10 @@ function sign(data: string, secret: string): string {
 
 // JWT erstellen
 export function createToken(userId: string, email: string, role: 'user' | 'admin' = 'user'): string {
+  if (!JWT_SECRET) {
+    throw new Error('Cannot create token: JWT_SECRET is not configured')
+  }
+
   const header = { alg: 'HS256', typ: 'JWT' }
   const now = Date.now()
 
@@ -67,6 +83,11 @@ export function createToken(userId: string, email: string, role: 'user' | 'admin
 
 // JWT validieren
 export function verifyToken(token: string): JWTPayload | null {
+  if (!JWT_SECRET) {
+    console.error('[AUTH] Cannot verify token: JWT_SECRET is not configured')
+    return null
+  }
+
   try {
     const parts = token.split('.')
     if (parts.length !== 3) return null

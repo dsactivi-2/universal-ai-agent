@@ -36,26 +36,132 @@ function securePath(inputPath: string): string {
 }
 
 // Blocked commands for security
+// Categories: destructive, network exfiltration, privilege escalation, crypto mining, reverse shells
 const BLOCKED_COMMANDS = [
+  // Destructive file operations
   'rm -rf /',
   'rm -rf /*',
+  'rm -rf ~',
+  'rm -rf .',
+  'rm -rf ..',
+  'rm -rf $HOME',
+  'rm -rf $PWD',
+  'shred',
+  'wipefs',
+
+  // Disk/filesystem destruction
   'mkfs',
   'dd if=',
+  'dd of=/dev',
+  '> /dev/sda',
+  '> /dev/nvme',
+  'fdisk',
+  'parted',
+
+  // Fork bombs and resource exhaustion
   ':(){',
   'fork bomb',
-  '> /dev/sda',
+  ':(){ :|:& };:',
+  'while true; do',
+  'yes |',
+
+  // Dangerous permissions
   'chmod -R 777 /',
+  'chmod 777 /',
+  'chown -R',
+  'chattr',
+
+  // Piped remote execution (dangerous patterns)
   'curl | bash',
+  'curl | sh',
   'wget | bash',
+  'wget | sh',
+  '| bash',
+  '| sh -c',
+  'bash -c "$(curl',
+  'bash -c "$(wget',
+
+  // Network exfiltration
+  'nc -e',
+  'netcat -e',
+  '/dev/tcp/',
+  '/dev/udp/',
+  'ncat --exec',
+
+  // Reverse shells
+  'bash -i >& /dev/tcp',
+  'python -c \'import socket',
+  'python3 -c \'import socket',
+  'perl -e \'use Socket',
+  'php -r \'$sock=fsockopen',
+  'ruby -rsocket',
+  'mkfifo /tmp/f',
+
+  // Privilege escalation
+  'sudo su',
+  'sudo -i',
+  'su root',
+  'passwd root',
+  'visudo',
+
+  // Environment/secret exfiltration
+  'printenv | curl',
+  'env | curl',
+  'cat /etc/shadow',
+  'cat /etc/passwd | curl',
+  '.bash_history',
+  '.ssh/id_rsa',
+  '.aws/credentials',
+
+  // Crypto mining indicators
+  'xmrig',
+  'minerd',
+  'cpuminer',
+  'stratum+tcp',
+
+  // System modification
+  'systemctl disable',
+  'systemctl stop',
+  '/etc/crontab',
+  'crontab -r',
+
+  // Dangerous process manipulation
+  'kill -9 1',
+  'killall',
+  'pkill -9',
+]
+
+// Additional dangerous patterns (regex-based check)
+const DANGEROUS_PATTERNS = [
+  /rm\s+(-[a-z]*f[a-z]*\s+)?(-[a-z]*r[a-z]*\s+)?\//i,  // rm with -rf and starting with /
+  />\s*\/dev\/(sd|nvme|hd)/i,                           // writing to disk devices
+  /base64\s+-d.*\|\s*(bash|sh)/i,                       // base64 decode piped to shell
+  /eval\s*\(\s*\$\(/i,                                  // eval with command substitution
 ]
 
 function isCommandSafe(command: string): boolean {
   const lowerCmd = command.toLowerCase()
+
+  // Check blocked command strings
   const isBlocked = BLOCKED_COMMANDS.some(blocked => lowerCmd.includes(blocked.toLowerCase()))
   if (isBlocked) {
-    toolLogger.error('Dangerous command blocked', new Error('Security violation'), { command })
+    toolLogger.error('Dangerous command blocked (string match)', new Error('Security violation'), {
+      command: command.slice(0, 200)
+    })
+    return false
   }
-  return !isBlocked
+
+  // Check dangerous patterns (regex)
+  const matchedPattern = DANGEROUS_PATTERNS.find(pattern => pattern.test(command))
+  if (matchedPattern) {
+    toolLogger.error('Dangerous command blocked (pattern match)', new Error('Security violation'), {
+      command: command.slice(0, 200),
+      pattern: matchedPattern.source
+    })
+    return false
+  }
+
+  return true
 }
 
 export interface ToolResult {

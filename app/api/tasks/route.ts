@@ -4,6 +4,7 @@ import { getAllTasks, createTask, updateTask, getTaskStats, addStep } from '@/li
 import { Orchestrator, StepResult } from '@/lib/orchestrator'
 import { apiLogger } from '@/lib/logger'
 import { requireAuth, authAndRateLimit } from '@/lib/auth'
+import { validateBody, validateQuery, CreateTaskSchema, UpdateTaskSchema, TaskQuerySchema, DeleteTaskQuerySchema } from '@/lib/validation'
 
 const orchestrator = new Orchestrator()
 
@@ -41,12 +42,12 @@ export async function POST(request: NextRequest) {
     const authResult = authAndRateLimit(request)
     if ('error' in authResult) return authResult.error
 
-    const { message } = await request.json()
+    // Zod Validierung
+    const body = await request.json()
+    const validationResult = validateBody(CreateTaskSchema, body)
+    if (!validationResult.success) return validationResult.error
 
-    if (!message || typeof message !== 'string') {
-      apiLogger.warn('POST /api/tasks - Missing message')
-      return NextResponse.json({ error: 'Message is required' }, { status: 400 })
-    }
+    const { message } = validationResult.data
 
     const taskId = uuidv4()
     apiLogger.info('Creating new task', { taskId, goal: message.slice(0, 50) })
@@ -120,13 +121,12 @@ export async function DELETE(request: NextRequest) {
     const authResult = requireAuth(request)
     if ('error' in authResult) return authResult.error
 
+    // Zod Validierung für Query-Parameter
     const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
+    const queryResult = validateQuery(DeleteTaskQuerySchema, searchParams)
+    if (!queryResult.success) return queryResult.error
 
-    if (!id) {
-      apiLogger.warn('DELETE /api/tasks - Missing task ID')
-      return NextResponse.json({ error: 'Task ID is required' }, { status: 400 })
-    }
+    const { id } = queryResult.data
 
     apiLogger.info('Deleting task', { taskId: id })
     const { deleteTask } = await import('@/lib/database')
@@ -153,12 +153,12 @@ export async function PATCH(request: NextRequest) {
     const authResult = requireAuth(request)
     if ('error' in authResult) return authResult.error
 
-    const { id, phase, output, summary, plan } = await request.json()
+    // Zod Validierung
+    const body = await request.json()
+    const validationResult = validateBody(UpdateTaskSchema, body)
+    if (!validationResult.success) return validationResult.error
 
-    if (!id) {
-      apiLogger.warn('PATCH /api/tasks - Missing task ID')
-      return NextResponse.json({ error: 'Task ID is required' }, { status: 400 })
-    }
+    const { id, phase, output, summary, plan } = validationResult.data
 
     apiLogger.debug('Updating task', { taskId: id, phase })
     const updated = updateTask(id, { phase, output, summary, plan })

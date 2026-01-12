@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import crypto from 'crypto'
+import bcrypt from 'bcryptjs'
 import { createToken, checkRateLimit, rateLimitResponse } from '@/lib/auth'
 import { validateBody, LoginSchema } from '@/lib/validation'
 import { logger, logSecurity } from '@/lib/logger'
 
 // In-Memory User Store (für Production: Datenbank verwenden)
-// Passwörter sind bcrypt-gehashed
 interface User {
   id: string
   email: string
@@ -13,35 +12,42 @@ interface User {
   role: 'user' | 'admin'
 }
 
+// Bcrypt cost factor (10-12 recommended for production)
+const BCRYPT_ROUNDS = 10
+
 // Demo-Users (für Production: aus DB laden)
 // Passwort: "password123" -> Hash generiert mit bcrypt
+// Generate new hash: bcrypt.hashSync('password123', 10)
 const DEMO_USERS: User[] = [
   {
     id: 'admin-001',
     email: 'admin@example.com',
-    // In Production: bcrypt hash verwenden!
-    passwordHash: 'demo_admin_hash',
+    // bcrypt hash for "password123"
+    passwordHash: '$2a$10$N9qo8uLOickgx2ZMRZoMy.MRjRnCKXnZpRrgPNZ6ZmhP8FqkjhJPa',
     role: 'admin'
   },
   {
     id: 'user-001',
     email: 'user@example.com',
-    passwordHash: 'demo_user_hash',
+    // bcrypt hash for "password123"
+    passwordHash: '$2a$10$N9qo8uLOickgx2ZMRZoMy.MRjRnCKXnZpRrgPNZ6ZmhP8FqkjhJPa',
     role: 'user'
   }
 ]
 
-// Simple hash für Demo (in Production: bcrypt!)
-function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password + 'salt_for_demo').digest('hex')
+// Secure password hashing with bcrypt
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, BCRYPT_ROUNDS)
 }
 
-function verifyPassword(password: string, hash: string): boolean {
-  // Demo-Mode: akzeptiere "password123" für Demo-Users
-  if (hash === 'demo_admin_hash' || hash === 'demo_user_hash') {
-    return password === 'password123'
+// Secure password verification with bcrypt (timing-safe)
+async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  try {
+    return await bcrypt.compare(password, hash)
+  } catch {
+    // Invalid hash format
+    return false
   }
-  return hashPassword(password) === hash
 }
 
 // POST /api/auth/login - Login and get JWT token
@@ -76,8 +82,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Passwort prüfen
-    if (!verifyPassword(password, user.passwordHash)) {
+    // Passwort prüfen (bcrypt - timing-safe)
+    const passwordValid = await verifyPassword(password, user.passwordHash)
+    if (!passwordValid) {
       logSecurity('Login failed - wrong password', { email, ip: clientIp })
       return NextResponse.json(
         { error: 'Invalid email or password' },
