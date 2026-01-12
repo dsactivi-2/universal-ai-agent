@@ -399,10 +399,15 @@ export default function Dashboard() {
 
   const filteredTasks = tasks.filter(task => {
     if (filter === 'all') return true
+    if (filter === 'action_required') return task.actionRequired === true
     return task.status.phase === filter
   })
 
-  const getStatusColor = (phase: string) => {
+  // Count tasks requiring action
+  const actionRequiredCount = tasks.filter(t => t.actionRequired).length
+
+  const getStatusColor = (phase: string, actionRequired?: boolean) => {
+    if (actionRequired) return 'bg-red-100 text-red-800 animate-pulse'
     switch (phase) {
       case 'completed': return 'bg-green-100 text-green-800'
       case 'executing': return 'bg-blue-100 text-blue-800'
@@ -415,7 +420,8 @@ export default function Dashboard() {
     }
   }
 
-  const getStatusLabel = (phase: string) => {
+  const getStatusLabel = (phase: string, actionRequired?: boolean) => {
+    if (actionRequired) return '⚠️ Handlung noetig'
     switch (phase) {
       case 'awaiting_approval': return 'Warte auf OK'
       case 'planning': return 'Plant...'
@@ -522,15 +528,17 @@ export default function Dashboard() {
 
         {/* Filters */}
         <div className="mb-6 flex flex-wrap gap-2">
-          {['all', 'awaiting_approval', 'planning', 'executing', 'completed', 'failed', 'stopped', 'rejected'].map(status => (
+          {['all', 'awaiting_approval', 'action_required', 'planning', 'executing', 'completed', 'failed', 'stopped', 'rejected'].map(status => (
             <button
               key={status}
               onClick={() => setFilter(status)}
               className={`px-4 py-2 rounded-lg ${
                 filter === status ? 'bg-blue-500 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'
-              }`}
+              } ${status === 'action_required' && actionRequiredCount > 0 ? 'ring-2 ring-red-400' : ''}`}
             >
-              {status === 'all' ? 'Alle' : getStatusLabel(status)}
+              {status === 'all' ? 'Alle' :
+               status === 'action_required' ? `⚠️ Handlung (${actionRequiredCount})` :
+               getStatusLabel(status)}
             </button>
           ))}
         </div>
@@ -541,6 +549,7 @@ export default function Dashboard() {
             <div
               key={task.id}
               className={`bg-white p-4 rounded-lg shadow hover:shadow-md cursor-pointer border-l-4 ${
+                task.actionRequired ? 'border-red-500 bg-red-50' :
                 task.status.phase === 'awaiting_approval' ? 'border-yellow-500' :
                 task.status.phase === 'planning' ? 'border-purple-500' :
                 task.status.phase === 'executing' ? 'border-blue-500' :
@@ -552,8 +561,8 @@ export default function Dashboard() {
             >
               <div className="flex justify-between items-start mb-2">
                 <h3 className="font-semibold truncate flex-1 mr-2">{task.goal}</h3>
-                <span className={`px-2 py-1 rounded-full text-xs whitespace-nowrap ${getStatusColor(task.status.phase)}`}>
-                  {getStatusLabel(task.status.phase)}
+                <span className={`px-2 py-1 rounded-full text-xs whitespace-nowrap ${getStatusColor(task.status.phase, task.actionRequired)}`}>
+                  {getStatusLabel(task.status.phase, task.actionRequired)}
                 </span>
               </div>
               <p className="text-sm text-gray-600 mb-2">
@@ -614,8 +623,8 @@ export default function Dashboard() {
                 <div className="flex-1 min-w-0 mr-4">
                   <h2 className="text-lg font-bold line-clamp-2 overflow-hidden" title={selectedTask.goal}>{selectedTask.goal}</h2>
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase)}`}>
-                      {getStatusLabel(selectedTask.status.phase)}
+                    <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status.phase, selectedTask.actionRequired)}`}>
+                      {getStatusLabel(selectedTask.status.phase, selectedTask.actionRequired)}
                     </span>
                     {(selectedTask.status.phase === 'executing' || selectedTask.status.phase === 'planning') && (
                       <span className="text-blue-500 animate-pulse text-sm">Laeuft...</span>
