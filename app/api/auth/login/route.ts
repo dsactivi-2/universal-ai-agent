@@ -35,8 +35,8 @@ const DEMO_USERS: User[] = [
   }
 ]
 
-// Secure password hashing with bcrypt
-export async function hashPassword(password: string): Promise<string> {
+// Secure password hashing with bcrypt (internal use only)
+function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, BCRYPT_ROUNDS)
 }
 
